@@ -177,6 +177,15 @@ let toastT = null;
 function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('on'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('on'),2200); }
 const flagText = {ok:'已选', multi:'多选/难分', faint:'浅涂', blank:'未填'};
 const flagCls = {ok:'ok', multi:'warn', faint:'warn', blank:'err'};
+// 考号是从哪儿来的 —— 这决定了老师该不该相信这份卷子的归属
+const sidSrcText = {
+  'file': '考号来自文件名', 'file-stem': '考号来自文件名（没解析出号码）',
+  'both': '文件名与卷面一致', 'sheet': '考号来自卷面填涂',
+  'roster': '卷面考号（缺位用名单补全）',
+  'conflict': '⚠ 文件名与卷面不一致', 'sheet-partial': '⚠ 卷面考号有缺位',
+};
+const sidSrcCls = {'conflict':'warn', 'sheet-partial':'warn', 'roster':'info',
+                   'sheet':'info', 'both':'ok', 'file':'', 'file-stem':''};
 
 // 校对图点击放大：按原生分辨率显示，看清每个圈旁的墨迹值。Esc / 点任意处关闭。
 function openLb(src){ const lb=$('#lb'); lb.querySelector('img').src = src; lb.classList.add('on'); }
@@ -386,19 +395,27 @@ function renderBatch(r){
         return `<tr><td>${q.no}</td><td><b>${esc(q.answer||'—')}</b></td>
           <td><span class="badge ${flagCls[q.flag]||''}">${flagText[q.flag]||esc(q.flag)}</span></td>${cells}</tr>`;
       }).join('');
-      return `<h4 style="font-size:12px;margin:10px 0 4px;color:var(--mut)">第 ${p.page+1} 面</h4>
+      return `<h4 style="font-size:12px;margin:10px 0 4px;color:var(--mut)">第 ${p.page+1} 面${
+        p.sid ? ` · 卷面考号 <b>${esc(p.sid.text)}</b>${
+          p.sid.ok ? '' : `<span class="badge warn">${esc((p.sid.flags||[]).filter(f=>f!=='ok').length)} 位存疑</span>`}` : ''
+      }</h4>
         <div style="max-height:260px;overflow:auto"><table><thead><tr><th>题号</th><th>答案</th><th>判定</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
     }).join('');
 
+    const srcBadge = s.sidSource
+      ? `<span class="badge ${sidSrcCls[s.sidSource]||''}" title="${esc(s.note||'')}">${esc(sidSrcText[s.sidSource]||s.sidSource)}</span>`
+      : '';
     html += `<div class="stu">
       <div class="hd">
         <div class="who">${esc(s.sid)} ${s.name ? esc(s.name) : '<span class="hint">（无姓名）</span>'}
           <small>${esc(s.cls||'')}</small></div>
         <div>
           ${label}
+          ${srcBadge}
           <span class="badge ${bad||fail?'warn':'ok'}">${pages.length} 面${fail?` · ${fail} 面失败`:''}${bad?` · ${bad} 项待确认`:''}</span>
         </div>
       </div>
+      ${s.note ? `<div class="hint">${esc(s.note)}</div>` : ''}
       ${bad ? `<ul class="issues">${(s.issues||[]).map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
       ${conf.length ? `<div class="hint" style="color:#b06a00">多页答案冲突：${conf.map(c=>'第'+c+'题').join('、')}</div>` : ''}
       <div class="chips">${chips || '<span class="hint">没有识别到答案</span>'}</div>
@@ -465,7 +482,8 @@ function renderResults(list){
          </div>`;
     d.innerHTML = `
       <div class="hd">
-        <div><b>${esc(r.name)}</b> <span class="badge ${bad?'warn':'ok'}">${r.questions.length} 题 · ${bad?bad+' 题存疑':'全部确定'}</span></div>
+        <div><b>${esc(r.name)}</b> <span class="badge ${bad?'warn':'ok'}">${r.questions.length} 题 · ${bad?bad+' 题存疑':'全部确定'}</span>
+          ${r.sid ? `<span class="badge ${r.sid.ok?'ok':'warn'}">卷面考号 ${esc(r.sid.text)}${r.sid.ok?'':'（存疑）'}</span>` : ''}</div>
         <span class="hint">面 ${r.page} · ${r.pxPerMm}px/mm</span>
       </div>
       <div class="grid2">

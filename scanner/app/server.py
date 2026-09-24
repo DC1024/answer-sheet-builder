@@ -56,6 +56,9 @@ def _recognize_bytes(data, name, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, g
         answers = {q['no']: {'answer': q['answer'], 'flag': q['flag'], 'best': q['best'],
                              'second': q['second'], 'ratios': q['ratios'], 'inks': q['inks']}
                    for q in r['questions']}
+        if r.get('sid'):
+            # 逐位坐标（x/y/w/h）是给 draw_overlay 用的，没必要发给浏览器
+            r['sid'] = {k: r['sid'].get(k) for k in ('text', 'digits', 'ok', 'filled', 'flags')}
         r.update({'id': rid, 'name': name, 'ok': True, 'overlay': saved})
         if png and not saved:
             # 校对图存不下来不该让整份结果作废 —— 答案已经识别出来了
@@ -286,12 +289,14 @@ def batch_api():
             except bt.BatchError as e:
                 pageIssues.append(str(e))
                 pages.append({'ok': False, 'name': p['name'], 'page': p['page'],
+                              'hinted': p.get('hinted'),
                               'source': p['relpath'], 'error': str(e)})
                 continue
             r, answers = _recognize_bytes(p['data'], p['name'], tpl,
                                           page_idx=p['page'], px_per_mm=px_per_mm,
                                           fill_min=fill_min, gap=gap)
             r['page'] = p['page']
+            r['hinted'] = p.get('hinted')
             r['source'] = p['relpath']
             if not r['ok']:
                 pageIssues.append(f'第 {p["page"] + 1} 面识别失败：{r["error"]}')
@@ -307,7 +312,16 @@ def batch_api():
         stu['pageIssues'] = pageIssues
         stu['source'] = '、'.join(p['source'] for p in pages if p.get('source'))
 
+    # 识别完才知道卷面上涂的考号 → 用它校正/合并分组（文件名里没有考号也能对上人）
+    students = bt.regroup(students, roster)
     students, warnings = bt.match(students, roster, _overrides())
+
+    if len(tpl['pages']) > 1:
+        nohint = [p for stu in students for p in stu['pages'] if p.get('ok') and not p.get('hinted')]
+        if nohint:
+            warnings.insert(0, f'有 {len(nohint)} 张图找不到页序提示，已按上传顺序分页 —— '
+                               f'这套模板有 {len(tpl["pages"])} 面，'
+                               f'请在文件名里写明（如 正面/反面 或 _1/_2）后再传一次')
     STATE['students'], STATE['warnings'] = students, warnings
 
     # 批量是「一个班一次」的操作：整批替换，避免上一批的学生残留
@@ -356,10 +370,13 @@ def get_students():
 
 @app.get('/api/roster.csv')
 def roster_csv():
+    """对账表：考号、考号从哪儿来的、几个人没交、有哪些问题要人工看。"""
     rows = [[s['sid'], s.get('name', ''), s.get('cls', ''),
+             bt.SID_SOURCE_ZH.get(s.get('sidSource'), ''),
              len(s.get('pages') or []),
+             s.get('note') or '',
              '；'.join(s.get('issues') or [])] for s in STATE['students']]
-    csv_text = st.to_csv(rows, ['考号', '姓名', '班级', '页数', '备注'])
+    csv_text = st.to_csv(rows, ['考号', '姓名', '班级', '考号来源', '页数', '说明', '备注'])
     return Response(csv_text, mimetype='text/csv; charset=utf-8',
                     headers={'Content-Disposition': 'attachment; filename="roster.csv"'})
 

@@ -20,6 +20,29 @@ All notable changes to this project are documented here.
   New scanner endpoints: `POST /api/roster`, `POST /api/batch/rematch`, `GET /api/students`, `GET /api/roster.csv`.
 - 新增两份离线测试：`scanner/tests/test_batch.py`（路径解析 / 解包 / 归组 / 名单 / 页序）与 `scanner/tests/test_service.py`（Flask 测试客户端直打接口，**部署前**就能拦住接线问题）。
   Two new offline suites: `scanner/tests/test_batch.py` and `scanner/tests/test_service.py` (drives the API through Flask's test client, catching wiring bugs **before** deployment).
+- **卷面考号：从答题卡上直接读考号，用不着二维码也用不着改名**。制卡端「考生信息栏」开启**考号填涂区**后，导出的阅卷模板会带上考号每一位格子的坐标（模板格式升级为 `asb-omr/2`，`asb-omr/1` 老模板继续可用）；扫描服务把考号从卷面上读回来，用它校正分组：
+  - 文件名里**没有**考号（`IMG_0001.jpg`、`扫描件_20240925_1030.png`）→ **按卷面归组**，散着传的多页还会被并成一份；
+  - 文件名里的考号与卷面**一致** → 互证；**不一致** → **保持原样不动**，两边都报出来让人确认（把卷子记错名字是不可逆的错）；
+  - 卷面有 1~2 位没涂出来 → 名单里**有且只有**一个人符合时自动补全，否则留着缺位等人填；
+  - 「文件名里的数字算不算考号」会分辨：`IMG_0001`／时间戳里的数字是序号不是考号，而目录名、
+    `2026010234_1.png`、`张伟明-2026010234` 里的算（名单里有这个人也算）。
+  名单对账 CSV 因此多了「考号来源」「说明」两列；界面每张考生卡上标出考号出处（卷面 / 文件名 / 互证 / ⚠ 冲突）。
+  **Scanner reads the candidate number off the sheet itself** — no QR code per student, no renaming 50 files.
+  Enabling the **ID fill-in block** in the sheet builder's candidate-info section makes the exported template carry
+  every ID bubble's coordinates (template format `asb-omr/2`; `asb-omr/1` keeps working). Grouping is then corrected
+  after recognition: a filename with no ID is overridden by the sheet, a mismatch is **never** silently acted on
+  (both values are reported for confirmation), and a 1–2 digit hole is filled in only when the roster has exactly
+  one candidate. `IMG_0001` / timestamp digits are recognised as serial numbers rather than IDs.
+- **卷面考号读不准时会说自己读不准**。新增 3 份边界素材（漏涂 / 浅涂 / 一列涂两个）与逐位断言：
+  漏涂位输出 `?` 占位并保持位数对齐（读出 `20?6010234`），浅涂位标 `faint`（中灰 ink 0.388），
+  一列涂两个标 `doubt`（两格都是 0.827）。校对图会把考号选中的那一格也圈出来、圈旁标位数与数字。
+  **The scanner reports uncertainty about the sheet-read ID** instead of guessing: three edge-case fixtures
+  (blank / light / double-filled position) assert per-digit status, and the proof overlay circles the chosen ID cell.
+- **名单能把考号洞补上、也能认出「只差一位」**：卷面上有位没涂出来时，若名单里只有一个人符合就自动补全；
+  考号不在名单里且名单里**恰好有一个**只差一位的考号时，直接指出「是第几位、应该是几」
+  （考号连号的学校会出现多个「只差一位」，那就只报「不在名单里」，不制造噪音）。
+  **The roster repairs and corroborates IDs**: a single-digit hole is auto-filled when exactly one roster entry
+  matches, and an ID that is off by exactly one digit from exactly one roster entry is pointed out by position.
 
 ### Performance / 性能
 - **扫描服务识别速度提升 36 倍**：单张 A4@400dpi 从 **13.2s → 0.37s**（2 核容器实测），一个班
@@ -37,6 +60,18 @@ All notable changes to this project are documented here.
   A regression test now pins that equivalence.
 
 ### Fixed / 修复
+- **浅涂题被误判成「多选」**。判定「一题涂了两个」时原来只看「次优选项与最优够接近」，
+  但**四个印刷字母之间的 ink 极差就有 0.08 左右**（实测一道空白题是 0.079）——
+  一道「A 涂得太轻」（ink 0.388）的次优是印刷字母 D（0.243），`rel2` 只比门槛高 **0.005**，
+  于是被报成「A 和 D 都涂了」。现在要求次优自己也得够深（`rel2 ≥ 0.2`）才算多选，否则退回 `faint`
+  （两个状态都会进复核队列，但 `faint` 指向的是正确答案）。考号列同理。
+  同时补了一份**真正的「一题涂两个」**素材，把这个判定钉住。
+  **Light fills were being misreported as multiple marks.** The "two options filled" test only required the
+  runner-up to be *close* to the best — but the four printed letters alone differ by ~0.08 in ink (measured
+  0.079 on a blank question), so a lightly-filled A (ink 0.388) whose runner-up was the letter D (0.243)
+  cleared the bar by **0.005** and got reported as "A and D are both filled". The runner-up must now itself
+  be inked (`rel2 ≥ 0.2`) to count as a multiple mark; otherwise it falls back to `faint`. A genuine
+  double-filled fixture was added to pin the behaviour.
 - **扫描服务：`data/` 目录不可写时整份识别结果被丢弃**。校对图写失败会连带把已经识别出来的答案一起变成「失败」——
   现在改成只降级：答案照常返回，接口标 `overlay: false`，前端显示原因而不是塞一个必然 404 的 `<img>`；
   写入前重新 `makedirs`，以应对挂载目录被外部改动的情况。

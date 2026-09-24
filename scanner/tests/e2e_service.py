@@ -76,7 +76,7 @@ def req(method, path, fields=None, files=None, json_body=None, raw=False):
 
 
 def main():
-    expected = json.load(open(os.path.join(FIX, 'expected.json'), encoding='utf-8'))
+    expected = json.load(open(os.path.join(FIX, 'expected.json'), encoding='utf-8'))['students']
     clean = sorted(f for f in os.listdir(FIX) if f.startswith('s') and f.endswith('.png'))
 
     print(f'=== 0. 连通性 {BASE} ===')
@@ -120,7 +120,7 @@ def main():
                 check(False, '校对图写入失败（检查 data/ 挂载目录是否存在且可写）',
                       str(it.get('overlayError'))[:120])
             stem = os.path.splitext(it['name'])[0].replace('_phone', '')
-            exp = expected.get(stem) or {}
+            exp = (expected.get(stem) or {}).get('answers') or {}
             got = {q['no']: q['answer'] for q in it['questions']}
             for no, want in exp.items():
                 if want is None:
@@ -139,6 +139,8 @@ def main():
         q8 = next((q for q in first['questions'] if q['no'] == 8), None)
         check(bool(q3) and q3['flag'] == 'blank', '第 3 题（未涂）→ blank', q3 and q3['flag'])
         check(bool(q8) and q8['flag'] == 'faint', '第 8 题（浅涂）→ faint', q8 and q8['flag'])
+        q15 = next((q for q in first['questions'] if q['no'] == 15), None)
+        check(bool(q15) and q15['flag'] == 'multi', '第 15 题（涂两个）→ multi', q15 and q15['flag'])
 
         st, png = req('GET', f"/api/overlay/{ids[0]}.png", raw=True)
         check(st == 200 and png[:8] == b'\x89PNG\r\n\x1a\n',
@@ -250,7 +252,7 @@ def main():
                '2026010236': 's03', '2026010237': 's04'}
     tot = cor = 0
     for s in stus:
-        exp = expected.get(SID2FIX.get(s['sid'], '')) or {}
+        exp = (expected.get(SID2FIX.get(s['sid'], '')) or {}).get('answers') or {}
         for no, want in exp.items():
             if want is None:
                 continue

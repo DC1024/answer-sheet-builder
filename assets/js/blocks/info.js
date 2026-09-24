@@ -60,6 +60,7 @@ export default {
         </label>
       </div>
       <p class="hint">填涂区宽度默认不超过<b>页面宽度的 1/4</b>（可调 10–60%），剩余宽度由右侧手写栏下划线拉满。上限内会把方框撑到尽量大（3–5mm），保证可填涂、可读；只有上限内连 3mm 都放不下时（位数很多或纸张较小）才自动放宽，且永不超出纸张。</p>
+      <p class="hint"><b>启用考号填涂区</b>后，扫描识别服务能把考号直接从卷面上读出来 —— 一个班的扫描件可以随便命名、打包成一个 zip 丢进去即可。不启用的话，就只能靠<b>文件名或目录名里带考号</b>来分组（也可以用，但得先给文件改名）。</p>
     `;
     const list = container.querySelector('#field-list');
     const renderList = () => {
@@ -136,9 +137,13 @@ export default {
     // 手写行：空框，供考生手写考号
     const write = `<tr>${Array.from({ length: n }, () => '<td class="write"></td>').join('')}</tr>`;
     // 数字行：中括号内即为数字（0–9），一排数字即可
+    // data-pos（第几位，1 起算）/ data-digit 供「导出阅卷模板」定位每个填涂格 ——
+    // 扫描端靠这两个钩子把考号从卷面上读出来，老师就不用把考号写进文件名了。
+    // 离屏实测（_tableMM）也走这个函数，所以量到的尺寸与真实渲染完全一致。
     let rows = '';
     for (let d = 0; d <= 9; d++){
-      rows += `<tr>${Array.from({ length: n }, () => `<td><span class="ebrk">${d}</span></td>`).join('')}</tr>`;
+      rows += `<tr>${Array.from({ length: n }, (_, i) =>
+        `<td><span class="ebrk" data-pos="${i + 1}" data-digit="${d}">${d}</span></td>`).join('')}</tr>`;
     }
     return head + write + rows;
   },
@@ -215,7 +220,8 @@ export default {
 
   _gridHtml(config, lay){
     const n = this._digits(config);
-    return `<div class="exam-grid" style="width:${lay.gridMM.toFixed(2)}mm;--brk:${lay.brk.toFixed(2)}mm">`
+    // data-sid 标记「这一块是考号填涂区」，导出阅卷模板时据此收集
+    return `<div class="exam-grid" data-sid="1" style="width:${lay.gridMM.toFixed(2)}mm;--brk:${lay.brk.toFixed(2)}mm">`
       + `<table>${this._tableInner(n)}</table></div>`;
   }
 };

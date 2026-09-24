@@ -498,8 +498,9 @@ function bindToolbar(){
   });
   document.getElementById('btn-omr').addEventListener('click', () => {
     const tpl = exportOmrTemplate(document.getElementById('sheet'));
-    if (!tpl.questionCount){
-      alert('这份卷子没有可识别的填涂圈 —— 阅卷模板只支持「填涂」样式的选择题（手写横线样式没有填涂圈可定位）。');
+    if (!tpl.questionCount && !tpl.sid){
+      alert('这份卷子没有可识别的填涂圈 —— 阅卷模板只支持「填涂」样式的选择题，'
+        + '以及考生信息栏里启用的「考号填涂区」（手写横线样式没有填涂圈可定位）。');
       return;
     }
     const blob = new Blob([JSON.stringify(tpl, null, 2)], { type: 'application/json' });
@@ -507,7 +508,15 @@ function bindToolbar(){
     a.href = URL.createObjectURL(blob);
     a.download = omrTemplateFileName(tpl);
     a.click();
-    toast(`阅卷模板已导出：${tpl.questionCount} 题 / ${tpl.pages.length} 面`);
+    const bits = [`${tpl.questionCount} 题`, `${tpl.pages.length} 面`];
+    bits.push(tpl.sid ? `考号填涂 ${tpl.sid.digits} 位` : '无考号填涂区');
+    toast(`阅卷模板已导出：${bits.join(' / ')}`);
+    // 没有考号填涂区时说清楚代价：扫描端只能靠文件名带考号来分组
+    if (!tpl.sid){
+      setTimeout(() => alert('提醒：这份模板里没有「考号填涂区」，扫描识别服务无法从卷面上读出考号，'
+        + '只能靠扫描件的文件名 / 目录名里带考号来分组（也可以用，但需要先给文件改名）。\n\n'
+        + '想在「考生信息栏」里启用它：选中该区块 → 勾选「启用考号填涂区」。'), 260);
+    }
   });
   document.getElementById('btn-reset').addEventListener('click', () => {
     if (confirm('确定重置为默认模板？当前未保存的修改将丢失。')){ store.reset(defaultBlocks()); applyPaper(); fullRender(); }

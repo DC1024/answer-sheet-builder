@@ -55,7 +55,7 @@ ROSTER = ('考号,姓名,班级\n'
           '2026010236,王五,高三(12)班\n'
           '2026010299,赵六,高三(12)班\n')
 
-EXPECTED = json.load(open(os.path.join(FIX, 'expected.json'), encoding='utf-8'))
+EXPECTED = json.load(open(os.path.join(FIX, 'expected.json'), encoding='utf-8'))['students']
 c = server.app.test_client()
 print(f'OpenCV {CV2}（容器里是 4.9.0.80，精度以端到端测试为准）')
 
@@ -115,6 +115,12 @@ warns = ' | '.join(j.get('warnings') or [])
 ok('没交卷' in warns, '提示名单里没交卷的人', warns[:100])
 ok('不在名单里' in warns, '提示有考号不在名单里', warns[:100])
 eq(m['2026010234']['issues'], [], '正常考生没有问题项')
+ok(all(s.get('sidSource') == 'both' for s in stus),
+   '目录名里的考号与卷面涂的一致 → 互证',
+   str([(s['sid'], s.get('sidSource')) for s in stus]))
+ok(all((p.get('sid') or {}).get('text') == s['sid'] for s in stus for p in s['pages']),
+   '每一页都从卷面上读到了考号',
+   str([(s['sid'], [p.get('sid') for p in s['pages']]) for s in stus][:1]))
 
 ok(all(p.get('ok') and p.get('overlay') for s in stus for p in s['pages']),
    '每一面都识别成功且校对图落盘',
@@ -129,7 +135,7 @@ SID2FIX = {'2026010234': 's01', '2026010235': 's02', '2026010236': 's03', '20260
 tot = cor = 0
 mismatch = []
 for s in stus:
-    exp = EXPECTED.get(SID2FIX.get(s['sid'], '')) or {}
+    exp = (EXPECTED.get(SID2FIX.get(s['sid'], '')) or {}).get('answers') or {}
     for no, want in exp.items():
         if want is None:
             continue
@@ -144,6 +150,7 @@ acc = cor / tot * 100 if tot else 0
 ok(acc >= 95, f'平均正确率 {acc:.1f}% (≥95%)', f'{cor}/{tot} ' + ','.join(mismatch[:5]))
 eq((stus[0]['answers'].get('3') or {}).get('flag'), 'blank', '第 3 题（未涂）保留 blank')
 eq((stus[0]['answers'].get('8') or {}).get('flag'), 'faint', '第 8 题（浅涂）保留 faint')
+eq((stus[0]['answers'].get('15') or {}).get('flag'), 'multi', '第 15 题（涂两个）保留 multi')
 eq(len(stus[0]['answers']), 20, '合并后题号覆盖 1-20')
 
 print('\n=== D. 统计与导出（默认只针对最近一批）===')
@@ -199,8 +206,10 @@ ok(next((s for s in j3.get('students') or [] if s['sid'] == '2026010237'), {})
 
 r = c.get('/api/roster.csv')
 rl = [l for l in r.data.decode('utf-8-sig').strip().splitlines() if l.strip()]
-eq(rl[0], '考号,姓名,班级,页数,备注', '名单对账表头')
+eq(rl[0], '考号,姓名,班级,考号来源,页数,说明,备注', '名单对账表头（带考号来源）')
 eq(len(rl), 5, '名单对账 4 人')
+ok('卷面' in r.data.decode('utf-8-sig'), '对账表里写明考号是卷面读到的还是文件名里的',
+   rl[1][:90])
 
 r = c.post('/api/roster', data={'file': (io.BytesIO(b'\xe5\xa7\x93\xe5\x90\x8d,\xe5\x88\x86\xe6\x95\xb0\n'), 'x.csv')},
            content_type='multipart/form-data')
@@ -255,6 +264,28 @@ eq([s['sid'] for s in fs], ['2026010234', '2026010235'], '两个同名文件靠�
 ok(all(p.get('ok') for s in fs for p in s['pages']), '两面都识别成功')
 ok(all('一班/202601023' in (p.get('source') or '') for s in fs for p in s['pages']),
    '保留原始相对路径便于溯源', str([p.get('source') for s in fs for p in s['pages']]))
+
+print('\n=== I. 文件名里没有考号 → 按卷面考号归组（不必给学生发码、也不必改名）===')
+# 相机/扫描仪命的 IMG_0001、扫描件_20240925_1030 里那串数字是序号/时间戳，不是考号。
+# 只要卷面涂了考号，就该按卷面归组 —— 这是「不改造学生名单、不要求改名」能不能落地的关键。
+z3 = mkzip([
+    ('扫描/IMG_0001.png', img('s01.png')),
+    ('扫描/IMG_0002.png', img('s02.png')),
+    ('扫描/IMG_0003.png', img('s03.png')),
+])
+r = post_batch(z3, '扫描.zip')
+j6 = r.get_json() or {}
+ok(r.status_code == 200, '相机命名的散图批量上传 200', str(j6)[:120])
+s6 = j6.get('students') or []
+eq([s['sid'] for s in s6], ['2026010234', '2026010235', '2026010236'], '考号取自卷面填涂')
+ok(all(s.get('sidSource') == 'sheet' for s in s6), '标出「考号来自卷面」',
+   str([(s['sid'], s.get('sidSource')) for s in s6]))
+ok(all('IMG_000' in (s.get('note') or '') for s in s6), '说明里写清是按哪个文件归的组',
+   str([s.get('note') for s in s6][:2]))
+ok(all('未能从文件名解析出考号' not in ' '.join(s.get('issues') or []) for s in s6),
+   '不再报「解析不出考号」（已经由卷面认出来了）',
+   str([s.get('issues') for s in s6][:2]))
+eq(len(s6[0]['answers']), 20, '答案照样齐全')
 
 print('\n' + '=' * 56)
 if FAILS:

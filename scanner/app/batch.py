@@ -1,12 +1,14 @@
 # 批量上传：解包 zip / 归组多页 / 解析名单 / 匹配学生。
 #
 # 目标：一次丢一个班的扫描件进来，而不是一份一份传。
-# 关键约定是「文件名/目录名里带考号」：
-#     2026010234/正面.png   2026010234/反面.png
-#     2026010234_1.png      2026010234_2.png
-#     2026010234.png
-# 目录名优先于文件名（学生按目录分文件夹是最省事的做法）。
-# 解析不出考号时退回用文件名当标识，这样原来的单份用法照旧能用。
+#
+# 身份来源有两层，**卷面优先**：
+#   1) 答题卡上的考号填涂区（识别出来之后才知道）—— 见本文件末尾的 regroup()
+#   2) 文件名/目录名里的考号（备选，且老师的命名习惯比想象中随意得多）：
+#        2026010234/正面.png   2026010234/反面.png
+#        2026010234_1.png      2026010234_2.png
+#        2026010234.png
+#      目录名优先于文件名。解析不出考号时退回用文件名当标识。
 import csv
 import io
 import os
@@ -206,6 +208,9 @@ def group(images):
         # 有页提示的按提示排在前；没有的按文件名自然序接在后面，保持相对顺序
         pages.sort(key=lambda p: (p['page'] if p['page'] is not None else 99, _natkey(p['name'])))
         for i, p in enumerate(pages):
+            # 记下「这一页的页码是文件名提示的，还是我们按顺序猜的」——
+            # 多面模板 + 没有页序提示 = 可能在拿第 2 面的坐标去采第 1 面，必须提醒。
+            p['hinted'] = p['page'] is not None
             if p['page'] is None:
                 p['page'] = i
         students.append({'sid': sid, 'pages': pages, 'issues': issues,
@@ -313,6 +318,7 @@ def match(students, roster, overrides=None):
         stu['cls'] = info.get('cls') or ''
         stu['issues'] = list(stu.get('baseIssues') or []) + list(stu.get('pageIssues') or [])
         stu['manual'] = bool(overrides.get(sid))
+        stu['sidSuggest'] = list(stu.get('sidSuggest') or [])
 
         if not roster:
             stu['matched'] = None                       # 没导名单，谈不上匹配
@@ -322,9 +328,19 @@ def match(students, roster, overrides=None):
                 stu['issues'].append('名单里这一行没填姓名')
         else:
             stu['matched'] = False
-            stu['issues'].append('考号不在名单里')
+            sug = suggest_sid(sid, roster)
+            # 只有**唯一**候选才值得说出来。很多学校考号是连号的（…234/235/236），
+            # 一个陌生的 237 会和其中好几个"只差一位" —— 那时候给建议纯粹是噪音。
+            stu['sidSuggest'] = sug if len(sug) == 1 else []
+            if len(sug) == 1:
+                pos = [i + 1 for i, (a, b) in enumerate(zip(sug[0], str(sid))) if a != b]
+                stu['issues'].append(
+                    f'考号不在名单里；名单里 {sug[0]} 只差第 {pos[0]} 位'
+                    f'（{str(sid)[pos[0] - 1]} → {sug[0][pos[0] - 1]}）—— 疑似涂错一位')
+            else:
+                stu['issues'].append('考号不在名单里')
 
-        if not SID_RE.fullmatch(sid):
+        if not SID_RE.fullmatch(str(sid)):
             stu['issues'].append('未能从文件名解析出考号，已用文件名当标识')
 
         if len(stu['pages']) > 1:
@@ -340,6 +356,11 @@ def match(students, roster, overrides=None):
     if bad:
         warnings.append(f'有 {len(bad)} 个考号不在名单里：{", ".join(map(str, bad[:8]))}'
                         + ('…' if len(bad) > 8 else ''))
+    near = [(s['sid'], s['sidSuggest'][0]) for s in students if s.get('sidSuggest')]
+    if near:
+        warnings.append(f'其中 {len(near)} 份卷子的考号与名单里的人只差一位'
+                        f'（{"、".join(f"{a}→{b}" for a, b in near[:4])}）—— '
+                        f'先核对是涂错还是名单有误，再判分')
     if roster:
         read = {s['sid'] for s in students}
         missing = [k for k in roster if k not in read]
@@ -365,3 +386,226 @@ def merge_answers(pages):
                            'ratios': q.get('ratios'), 'inks': q.get('inks')}
     answers = {k: answers[k] for k in sorted(answers)}
     return answers, sorted(set(conflicts))
+
+
+# ---------------------------------------------------------------- 卷面考号
+#
+# 文件名归组要求老师把文件命名成考号，现实里做不到（「不可能每个学生都发二维码」，
+# 同理也不会有人专门去改 50 个文件名）。但答题卡上本来就印了考号填涂区 ——
+# 识别完之后从卷面上把考号读回来，用它校正/补全分组。
+#
+# 这里只在**识别完之后**做，因为卷面考号必须先认出卷子才拿得到。
+
+SID_HOLES_MAX = 2       # 卷面最多容忍几位没读出来（整格漏涂很常见，1~2 位可以靠名单补）
+
+# sidSource → 给人看的一句话。老师说「这个考号哪来的」比看内部字段名直观。
+SID_SOURCE_ZH = {
+    'file': '文件名',
+    'file-stem': '文件名（没解析出考号）',
+    'sheet': '卷面填涂',
+    'both': '文件名 + 卷面（一致）',
+    'roster': '卷面 + 名单补全缺位',
+    'conflict': '⚠ 文件名与卷面不一致',
+    'sheet-partial': '⚠ 卷面有缺位',
+}
+
+
+def resolve_sid(text, roster):
+    """考号里有几位没读出来时，用名单把洞补上。
+
+    只有「名单里有且只有一个人符合」才敢补 —— 补错了就是把卷子记到别人名下，
+    比留个洞让人来输糟得多。返回 (考号 or None, 全部候选)。
+    """
+    if '?' not in text or not roster:
+        return None, []
+    num = str(text)
+    pat = re.compile(''.join('.' if c == '?' else re.escape(c) for c in num))
+    hits = [str(k) for k in roster if len(str(k)) == len(num) and pat.match(str(k))]
+    return (hits[0] if len(hits) == 1 else None), hits
+
+
+def sheet_sids(pages):
+    """汇总一份卷子各页读到的卷面考号。
+
+    返回 (考号 or None, info)。`?` 表示那一位没读出来。
+    只有「读出来的每一页都一致」才算数：同一个人两页读出两个考号，说明有东西错了，
+    这时候猜哪一个都是错的一半，交给人工。
+    """
+    reads = [(p.get('sid') or {}).get('text') or '' for p in pages]
+    reads = [t.strip() for t in reads if t and t.strip()]
+    info = {'reads': reads, 'holes': 0, 'agree': True, 'why': ''}
+    if not reads:
+        info['why'] = '没有读到卷面考号（模板里没有考号填涂区，或这几页都没认出来）'
+        return None, info
+    uniq = sorted(set(reads))
+    if len(uniq) > 1:
+        info.update(agree=False, why='同一份卷子的不同页读出的考号不一样：' + '、'.join(uniq))
+        return None, info
+    text = uniq[0]
+    info['holes'] = text.count('?')
+    if info['holes'] > SID_HOLES_MAX:
+        info['why'] = f'卷面考号只读出 {len(text) - info["holes"]}/{len(text)} 位，认不出是谁'
+        return None, info
+    return text, info
+
+
+def _absorb(dst, src):
+    """把 src 的页并进 dst（同一个考号被拆在几个分组里时）。"""
+    dst['pages'] = list(dst.get('pages') or []) + list(src.get('pages') or [])
+    dst['pages'].sort(key=lambda p: (p.get('page') if p.get('page') is not None else 99,
+                                     _natkey(p.get('name') or '')))
+    dst['dirs'] = sorted(set(dst.get('dirs') or []) | set(src.get('dirs') or []))
+    extra = [i for i in (src.get('baseIssues') or []) if i not in (dst.get('baseIssues') or [])]
+    dst['baseIssues'] = list(dst.get('baseIssues') or []) + extra
+    dst['mergedFrom'] = list(dst.get('mergedFrom') or []) + \
+        [str(src.get('fileSid') or src.get('sid'))] + list(src.get('mergedFrom') or [])
+    # 页变了，答案就得重算 —— 合并后同题号可能撞车，正好在这儿报出来
+    dst['answers'], conflicts = merge_answers([p for p in dst['pages'] if p.get('ok')])
+    dst['conflicts'] = conflicts
+    if conflicts:
+        msg = '多页同一题号答案不一致：' + '、'.join(f'第{c}题' for c in conflicts[:10])
+        if msg not in (dst.get('pageIssues') or []):
+            dst['pageIssues'] = list(dst.get('pageIssues') or []) + [msg]
+    dst['source'] = '、'.join(p['source'] for p in dst['pages'] if p.get('source'))
+
+
+def regroup(students, roster=None):
+    """用卷面读到的考号校正分组。原地改 students，返回新的列表（可能更短）。
+
+    学校不给学生发二维码、也不会有人把 50 个文件改名成考号 —— 所以「卷面考号」才是
+    主身份来源，文件名只是备选。但**不能自作主张**：把两份卷子并成一份、或者把卷子
+    记到别人名下，都是不可逆的错。所以规则是：
+
+      文件名里有可信的考号 + 卷面读到且一致 → 两边互证
+      文件名里有可信的考号 + 卷面读到但不一致 → **保持原样**，两边都报出来让人确认
+      文件名里没有可信考号 + 卷面读到 → 用卷面的（还能把散着传的多页并成一份）
+      卷面有洞 → 名单里只有一个人符合才敢补，否则留着洞等人填
+    """
+    for stu in students:
+        text, info = sheet_sids(stu['pages'])
+        stu['sheetSid'] = text
+        stu['sheetSidInfo'] = info
+        stu['fileSid'] = str(stu.get('sid') or '')
+        stu['sidSuggest'] = []
+        # 「文件名里的数字是不是考号」要分清楚：IMG_0001 里的 0001 不是，
+        # 2026010234_1.png 里的才是。前者如果被判成「另一个考号」，就会把卷面考号
+        # 当成冲突而拒绝归组 —— 越是随手命名的老师越用不了。
+        # 用第一页的原始路径判断（多页时 source 是「a、b」拼起来的，不能直接拆目录）
+        rel = next((p.get('source') for p in stu['pages'] if p.get('source')), '') or stu['fileSid']
+        # 提示里要写**文件名**而不是解析出来的数字串：IMG_0001.png 的 fileSid 是 "0001"，
+        # 把它当成「文件名里的考号」讲给老师听，比不说还让人糊涂。
+        stu['fileName'] = os.path.basename(str(rel).replace('\\', '/').split('、')[0]) or stu['fileSid']
+        strong = SID_RE.fullmatch(stu['fileSid']) and \
+            file_sid_strong(rel, stu['fileSid'], roster)
+        stu['fileSidStrong'] = bool(strong)
+        stu['sidSource'] = 'file' if SID_RE.fullmatch(stu['fileSid']) else 'file-stem'
+
+        if text and '?' in text:
+            fixed, hits = resolve_sid(text, roster or {})
+            stu['sidSuggest'] = hits
+            if fixed:
+                stu['sid'] = fixed
+                stu['sidSource'] = 'roster'
+                stu['note'] = (f'卷面考号 {text} 有 {text.count("?")} 位没涂出来，'
+                               f'名单里只有 {fixed} 符合，已按这个考号归组')
+            else:
+                stu['sid'] = text
+                stu['sidSource'] = 'sheet-partial'
+                stu['baseIssues'] = list(stu.get('baseIssues') or []) + [
+                    f'卷面考号有 {text.count("?")} 位没涂出来（{text}），'
+                    + (f'名单里有 {len(hits)} 个人符合，请人工认领' if hits else '名单里也认不出来，请人工填写')]
+            continue
+
+        if strong:
+            if text == stu['fileSid']:
+                stu['sidSource'] = 'both'
+            elif text:
+                stu['sidSource'] = 'conflict'
+                stu['baseIssues'] = list(stu.get('baseIssues') or []) + [
+                    f'文件名里的考号（{stu["fileSid"]}，见 {stu["fileName"]}）和卷面涂的（{text}）'
+                    f'不一致 —— 已按文件名归组，请人工确认这份卷子该记到谁名下']
+            continue
+
+        if text:
+            stu['sid'] = text
+            stu['sidSource'] = 'sheet'
+            stu['note'] = f'文件名（{stu["fileName"]}）里没有考号，按卷面涂的 {text} 归组'
+        elif len(stu['pages']) > 1:
+            stu['baseIssues'] = list(stu.get('baseIssues') or []) + [
+                f'文件名（{stu["fileName"]}）里的数字不太像考号，卷面也没读到考号 —— '
+                f'{len(stu["pages"])} 页被归到同一个人，请确认']
+
+    # 只有「身份是从卷面认出来的」才允许合并 —— 文件名已经写了考号的，身份本来就
+    # 明确，万一卷面读串了，合并等于把两个人并成一个。
+    out, bykey = [], {}
+    for stu in students:
+        key = str(stu['sid'])
+        mergeable = stu['sidSource'] in ('sheet', 'roster') and '?' not in key
+        if not mergeable or key not in bykey:
+            if mergeable:
+                bykey[key] = stu
+            out.append(stu)
+            continue
+        tgt = bykey[key]
+        before = len(tgt['pages'])
+        _absorb(tgt, stu)
+        tgt['note'] = (tgt.get('note') or '') + \
+            f'（{stu["fileName"]} 也读到这个考号，已并为同一人的多页：{before} → {len(tgt["pages"])} 页）'
+    return out
+
+
+def suggest_sid(sid, roster, limit=4):
+    """名单里与 sid 只差一位数字的考号。
+
+    填涂错一位是这类卡子最常见的手误。但**调用方只在恰好命中一个时才给出建议** ——
+    不少学校考号是连号的（…234/235/236），一个陌生的 237 会和好几个「只差一位」，
+    那时候列出来只是噪音。所以这里返回全部候选，由 match() 决定要不要说。
+    """
+    sid = str(sid or '')
+    if not roster or not sid or '?' in sid or sid in roster:
+        return []                       # 本来就在名单里 → 没什么可建议的
+    hits = []
+    for k in roster:
+        k = str(k)
+        if len(k) != len(sid):
+            continue
+        if sum(1 for a, b in zip(k, sid) if a != b) == 1:
+            hits.append(k)
+            if len(hits) >= limit:
+                break
+    return hits
+
+
+# 相机/扫描仪自动命名的文件里也有一串数字，但那是序号或时间戳，不是考号。
+# 不把这类名字和「有人特意写的考号」区分开，就会出现最尴尬的情况：
+#   IMG_0001.png 卷面上明明读到了 2026010234，却因为文件名里的 "0001" 被判成
+#   「两个考号打架」，于是拒绝归组 —— 越不认识命名习惯的老师越用不了。
+DEVICE_RE = re.compile(
+    r'^(img|dsc|dscn|dji|gopr|imgp|scan\w*|scn|image|photo|pic|mvimg|vid|screenshot|'
+    r'截屏|截图|扫描|扫描件|照片|图像|相机|图片|微信图片|微信截图)[-_\s]*\d', re.I)
+STAMP_RE = re.compile(r'^\d{8}[-_\s]?\d{4,6}([-_\s]\d+)?$')     # 20240925_103012
+SUFFIX_JUNK = re.compile(r'[\s_\-.,()（）\[\]【】]+')
+
+
+def file_sid_strong(relpath, sid, roster=None):
+    """文件名里那串数字，像不像「有人特意写的考号」？
+
+    像（True）：写在目录名里（按考生分文件夹）、整段名字就是这个号码（可带 _1 页后缀）、
+              「姓名-考号」这种写法、或者名单里真有这个考号。
+    不像（False）：IMG_0001 / DSC_0123 / 扫描件_20240925_1030 —— 数字是序号或日期。
+    不像的时候，如果卷面读到了考号，就该以卷面为准。
+    """
+    sid = str(sid)
+    rel = str(relpath).replace('\\', '/')
+    parts = [p for p in rel.split('/') if p]
+    stem = os.path.splitext(parts[-1])[0] if parts else ''
+    if roster and sid in roster:
+        return True                                  # 名单里有这个人 → 显然是特意写的
+    if any(sid in d for d in parts[:-1]):
+        return True                                  # 目录里写了 → 特意按考生分的文件夹
+    if DEVICE_RE.match(stem) or STAMP_RE.match(stem):
+        return False
+    if re.search(r'[\u4e00-\u9fff]', stem):
+        return True                                  # 「张伟明-2026010234」
+    rest = SUFFIX_JUNK.sub('', stem.replace(sid, '', 1))
+    return rest == '' or rest.isdigit()              # 只剩页号（2026010234_1）也算

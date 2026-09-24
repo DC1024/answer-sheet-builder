@@ -208,5 +208,121 @@ bt.match(reuse, {})
 ok(reuse[0]['matched'] is None, '清空名单后不再报「不在名单里」')
 ok(not any('不在名单里' in i for i in reuse[0]['issues']), '旧的「不在名单」结论已被清掉')
 
+print('\n=== I. 卷面考号：校正分组 / 合并散页 / 缺位补全 / 错一位建议 ===')
+# 现实里不会有老师把 50 个文件改名成考号，也不会给每个学生发二维码。
+# 所以「卷面考号」是主身份来源 —— 但它必须在识别之后才拿得到，
+# 于是分组要能**事后校正**。这一节把校正的几条规矩钉住。
+
+
+def png_page(sid_text=None, ans=None, page=None, hinted=True, ok=True, source='p.png'):
+    """一页的识别结果（假的，只为跑归组逻辑）"""
+    t = sid_text or ''
+    sid = ({'text': t, 'digits': len(t), 'ok': '?' not in t,
+            'filled': len(t) - t.count('?'), 'flags': ['ok'] * len(t)} if t else None)
+    return {'ok': ok, 'name': 'p.png', 'page': page, 'hinted': hinted, 'source': source,
+            'sid': sid,
+            'questions': [{'no': k, 'answer': v, 'flag': 'ok'} for k, v in (ans or {}).items()]}
+
+
+def run(images, sid_of=None, ans_of=None, roster=None):
+    """照 server.batch_api 的顺序走一遍：group → 逐页识别（用假结果）→ regroup → match"""
+    roster = roster or {}
+    students = bt.group(images)
+    for stu in students:
+        pages = [png_page((sid_of or {}).get(p['relpath']), (ans_of or {}).get(p['relpath']),
+                          page=p['page'], hinted=p['hinted'], source=p['relpath'])
+                 for p in stu['pages']]
+        stu['pages'] = pages
+        stu['answers'], stu['conflicts'] = bt.merge_answers(pages)
+        stu['pageIssues'] = []
+        stu['source'] = '、'.join(p['source'] for p in pages)
+    return bt.match(bt.regroup(students, roster), roster)
+
+
+def img(name):
+    return (name, name, PNG)
+
+
+# --- 先分清「文件名里的数字是不是考号」 -----------------------------------
+# 相机命名的 IMG_0001 里有 "0001"，扫描件里常带 "20240925_1030" 时间戳。
+# 这些如果被当成考号，就会和卷面读到的考号「打架」，于是系统拒绝归组 ——
+# 越是不按规范命名的老师越用不了，正好和「不想改名」的初衷相反。
+eq(bt.file_sid_strong('IMG_0001.png', '0001'), False, 'IMG_0001.png 里的数字不算考号')
+eq(bt.file_sid_strong('scan_0012.png', '0012'), False, 'scan_0012.png 不算')
+eq(bt.file_sid_strong('扫描件_20240925_1030.png', '20240925'), False, '时间戳不算考号')
+eq(bt.file_sid_strong('2026010234_1.png', '2026010234'), True, '2026010234_1.png 里的算考号')
+eq(bt.file_sid_strong('2026010234.png', '2026010234'), True, '整段名字就是考号')
+eq(bt.file_sid_strong('2026010234/正面.png', '2026010234'), True, '写在目录名里的算考号')
+eq(bt.file_sid_strong('张伟明-2026010234.png', '2026010234'), True, '「姓名-考号」算考号')
+eq(bt.file_sid_strong('IMG_0001.png', '0001', roster={'0001': {}}), True,
+   '名单里真有这个人 → 反过来认可它（命名习惯不一致时以名单为准）')
+
+
+# --- 文件名里没有考号（IMG_0001 这种）→ 用卷面读到的人 ---
+stus, _ = run([img('IMG_0001.png'), img('IMG_0002.png')],
+              {'IMG_0001.png': '2026010234', 'IMG_0002.png': '2026010234'},
+              {'IMG_0001.png': {1: 'A', 2: 'B'}, 'IMG_0002.png': {3: 'C', 4: 'D'}})
+eq(len(stus), 1, '两张散图按卷面考号并成一位考生（不必改名）')
+eq(stus[0]['sid'], '2026010234', '考号取自卷面')
+eq(stus[0]['sidSource'], 'sheet', '标出「考号来自卷面」')
+eq(len(stus[0]['pages']), 2, '两页都归到这一位')
+eq(sorted(stus[0]['answers']), [1, 2, 3, 4], '两页答案合并，没有互相覆盖')
+ok('IMG_0002.png' in (stus[0]['note'] or ''), '说明里写清是哪几张图并的')
+
+# --- 文件名与卷面一致 → 互证，无事发生 ---
+stus, _ = run([img('2026010234.png')], {'2026010234.png': '2026010234'})
+eq(stus[0]['sidSource'], 'both', '文件名与卷面一致时标为互证')
+eq(stus[0]['issues'], [], '两边一致就没有要人工看的问题')
+
+# --- 文件名与卷面不一致 → 不擅自改，两边都摆出来 ---
+stus, _ = run([img('2026010234.png')], {'2026010234.png': '2026010235'})
+eq(stus[0]['sid'], '2026010234', '冲突时保持文件名归组（不擅自把卷子记到别人名下）')
+eq(stus[0]['sidSource'], 'conflict', '标为冲突待确认')
+ok(any('不一致' in i for i in stus[0]['issues']), '冲突进「待确认」列表')
+
+# --- 同一份卷子两页读串了 → 谁的都不信 ---
+stus, _ = run([img('2026010234_1.png'), img('2026010234_2.png')],
+              {'2026010234_1.png': '2026010234', '2026010234_2.png': '2026010235'})
+eq(len(stus), 1, '两页读串了仍按文件名合成一份')
+eq(stus[0]['sheetSid'], None, '拿不准时 sheetSid 为 None（不猜）')
+ok(stus[0]['sheetSidInfo']['agree'] is False, '记下「两页读得不一样」而不是「没读到」')
+
+# --- 卷面缺位：名单里唯一符合才敢补 ---
+roster1 = {'2026010234': {'name': '张伟明', 'cls': '高三(12)班'},
+           '2026010235': {'name': '李小明', 'cls': '高三(12)班'}}
+stus, _ = run([img('IMG_0001.png')], {'IMG_0001.png': '20?6010234'}, roster=roster1)
+eq(stus[0]['sid'], '2026010234', '卷面缺一位 + 名单里唯一符合 → 自动补全')
+eq(stus[0]['sidSource'], 'roster', '标出「名单补全缺位」')
+eq(stus[0]['matched'], True, '补全后能对上名单的人')
+eq(stus[0]['name'], '张伟明', '姓名也接上了')
+
+roster2 = {'2026010234': {'name': '张伟明', 'cls': ''},
+           '2096010234': {'name': '王五', 'cls': ''}}
+stus, _ = run([img('IMG_0001.png')], {'IMG_0001.png': '20?6010234'}, roster=roster2)
+eq(stus[0]['sid'], '20?6010234', '两个人符合 → 不猜，保留缺位')
+eq(stus[0]['sidSource'], 'sheet-partial', '标为「卷面有缺位」')
+ok(any('人工认领' in i for i in stus[0]['issues']), '缺位且有多个候选人 → 进待确认列表')
+
+# --- 错一位数字：指出是哪一位、应该是几 ---
+stus, warns = run([img('IMG_0001.png')], {'IMG_0001.png': '2026010239'},
+                  roster={'2026010234': {'name': '张伟明', 'cls': '高三(12)班'}})
+eq(stus[0]['sid'], '2026010239', '读到的考号照原样保留（不能替学生改）')
+eq(stus[0]['sidSuggest'], ['2026010234'], '给出「只差一位」的候选')
+ok(any('只差第 10 位' in i for i in stus[0]['issues']), '问题里写清是哪一位错')
+ok(any('只差一位' in w for w in warns), '汇总警告里也提一句，老师不用逐张看')
+
+# --- 单测：resolve_sid / sheet_sids 的边界 ---
+eq(bt.resolve_sid('20?6010234', {}), (None, []), '没有名单时不去猜缺位')
+eq(bt.resolve_sid('2026010234', roster1), (None, []), '没有缺位就没有可补的')
+eq(bt.suggest_sid('2026010234', roster1), [], '考号本来就在名单里 → 没有建议')
+eq(bt.suggest_sid('20?6010234', roster1), [], '还带着缺位 → 不做错一位建议')
+eq(bt.suggest_sid('2026010234', {}), [], '没有名单 → 没有建议')
+eq(bt.sheet_sids([{'sid': None}, {'ok': False}])[0], None, '一页都没读出考号 → None')
+eq(bt.sheet_sids([{'sid': {'text': '2?26?1?234'}}])[0], None, '缺位太多（认不出是谁）→ None')
+
+# --- 页码是不是文件名提示的，要记下来（多面模板靠它提醒可能排错页）---
+g = bt.group([('2026010234/正面.png', '正面.png', PNG), ('2026010234/x.png', 'x.png', PNG)])
+eq([p['hinted'] for p in g[0]['pages']], [True, False], '「页码来自文件名提示」被记下来')
+
 print('\n' + ('🎉 批量上传全部通过' if fails == 0 else f'⚠️ {fails} 项未通过'))
 sys.exit(0 if fails == 0 else 1)
