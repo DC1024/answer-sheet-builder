@@ -44,6 +44,41 @@ All notable changes to this project are documented here.
   **The roster repairs and corroborates IDs**: a single-digit hole is auto-filled when exactly one roster entry
   matches, and an ID that is off by exactly one digit from exactly one roster entry is pointed out by position.
 
+- **扫描服务：登录与角色**。所有 `/api/*` **默认拒绝**（白名单只放 `/api/health` / `/api/login` /
+  `/api/setup` / `/api/me`）；角色分**管理员 / 老师 / 只读**，判定的是**动作**不是数据
+  （能不能改结果、能不能管用户）；**不内置任何默认口令**——库里一个用户都没有时，第一个打开页面的人
+  走「创建管理员」，而不是拿 `admin/admin` 登录；口令只存 `pbkdf2_sha256` 散列（标准库实现，不引第三方依赖），
+  会话存在**服务端 SQLite**，改口令 / 退出登录会即时失效、可吊销别处登录。新增账号管理（建账号 / 改角色 /
+  重置口令 / 删除），**最后一个管理员既不能降级也不能删除**。
+  **Scanner: login and roles.** Every `/api/*` is denied by default (only `/api/health` `/api/login`
+  `/api/setup` `/api/me` are public); three roles (admin / teacher / viewer) gate *actions*, not data;
+  no default password — the first visitor creates the admin when the user table is empty; passwords are
+  `pbkdf2_sha256` hashes and sessions live server-side (revocable, killed on password change / logout).
+- **扫描服务：结果持久化改为 SQLite（`data/asb.db`），考试为持久化单元**。去掉了原来的内存 `STATE`——
+  **重启 / 刷新页面 / 换浏览器都不丢结果**，两个老师同时用也不会把对方的结果冲掉（并发串台这个老隐患没了）；
+  多考试隔离、切换、删除，最近操作的考试会被记住。
+  **Scanner: results now persist in SQLite, scoped by exam.** The in-memory `STATE` is gone — restart, refresh
+  and concurrent teachers are all safe; multiple exams are isolated and switchable.
+- **部署：`docker-compose` 健康检查改打 `/api/health`**。`/api/template` 现在要登录，沿用旧检查会把容器
+  判成 unhealthy。
+  **Deploy: the compose healthcheck now hits `/api/health`** — `/api/template` requires auth now, so the old
+  probe would mark the container unhealthy.
+
+### Changed / 变更
+- **扫描服务数据结构从「内存 STATE」迁到 SQLite**：所有接口改按 `exam_id` 读写；`/api/template` 现在需要登录
+  （上传模板走写权限）。前端新增考试下拉、账号/角色 UI、`⑤ 账号管理`卡片（仅管理员可见）。
+  **Scanner: in-memory STATE → SQLite; `/api/template` now requires login;** the UI gained an exam switcher,
+  account/role management and an admin-only account card.
+
+### Fixed / 修复
+- **「全班 0 分」的持久化陷阱**。判分按题号（`int`）查答案，但 JSON 只认字符串键——把整个考生字典当 blob 存
+  再读回，键没归一化的话判分全查不到。持久化层统一在读写时做「题号键 ↔ 字符串」往返，并在 `test_store.py` /
+  `test_service.py` 钉住「存进去再读回来分还是对的」这条不变量。
+  **The "whole class scored 0" persistence trap.** Scoring looks up answers by question number (`int`), but JSON
+  only allows string keys; storing the whole student dict as a blob and reading it back without normalising
+  would zero every score. The store now normalises question keys on every read/write, and `test_store.py` /
+  `test_service.py` pin the "store then reload still scores correctly" invariant.
+
 ### Performance / 性能
 - **扫描服务识别速度提升 36 倍**：单张 A4@400dpi 从 **13.2s → 0.37s**（2 核容器实测），一个班
   50 人 × 2 面从 20 多分钟降到约 40 秒。瓶颈是光照归一化里的背景估计 —— 对 14M 像素做 159×159

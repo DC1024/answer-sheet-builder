@@ -27,7 +27,9 @@ FAILS = []
 # 不在 JSON 里回传 —— 所以客户端得自己维护 cookie 罐）。
 COOKIES = {}
 E2E_USER = os.environ.get('ASB_E2E_USER', 'e2e_admin')
-E2E_PASS = os.environ.get('ASB_E2E_PASS', 'e2e_admin_' + os.urandom(6).hex())
+# 固定口令：data/ 是 bind mount，asb.db 在多次部署/多次跑 e2e 之间会留下来，
+# 口令随机的话第二次就登不上了（库里已经有用户，但密码对不上）。固定下来才能重复跑。
+E2E_PASS = os.environ.get('ASB_E2E_PASS', 'e2e_pass_2026')
 
 
 def _store_cookies(resp):
