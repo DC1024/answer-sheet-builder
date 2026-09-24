@@ -50,11 +50,30 @@ def _template_quad(tpl, page_idx=0):
     return np.float32([[marks[p]['x'], marks[p]['y']] for p in ('tl', 'tr', 'br', 'bl')]), idx
 
 
-def _lighting_normalize(gray):
-    """抑制手机拍照的明暗渐变：用形态学背景做除法归一化"""
-    k = max(15, (min(gray.shape) // 20) | 1)
-    bg = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
-    bg = cv2.GaussianBlur(bg, (0, 0), k / 4.0)
+def _lighting_normalize(gray, down=4):
+    """抑制手机拍照的明暗渐变：用形态学背景做除法归一化。
+
+    背景是一层**低频平滑场**，没必要在原分辨率上估 —— 159×159 的椭圆闭运算在 14M 像素上
+    要近 1 秒（容器里更慢），而整条识别里其它部分加起来才 100ms 出头。先按 1/4 降采样算出
+    背景再插值回来，成本降到约 1/16，背景本身几乎不变。
+
+    核尺寸按**原图**算、再换算到小图上（`k*scale`），保证物理邻域和原来一致 ——
+    否则小图上的 `max(15, …)` 下限会让小图用上相对更大的核。
+    """
+    h, w = gray.shape
+    scale = 1.0 / down if down > 1 and min(h, w) >= 4 * 64 else 1.0
+
+    k = max(15, (min(h, w) // 20) | 1)                  # 原图上的核（保持原语义）
+    work = gray
+    if scale != 1.0:
+        work = cv2.resize(gray, (max(1, int(round(w * scale))), max(1, int(round(h * scale)))),
+                          interpolation=cv2.INTER_AREA)
+    ks = max(3, int(round(k * scale)) | 1)
+    bg = cv2.morphologyEx(work, cv2.MORPH_CLOSE,
+                          cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ks, ks)))
+    bg = cv2.GaussianBlur(bg, (0, 0), ks / 4.0)
+    if scale != 1.0:
+        bg = cv2.resize(bg, (w, h), interpolation=cv2.INTER_LINEAR)
     bg[bg == 0] = 1
     return cv2.divide(gray, bg, scale=255)
 

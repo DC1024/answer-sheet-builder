@@ -21,6 +21,21 @@ All notable changes to this project are documented here.
 - 新增两份离线测试：`scanner/tests/test_batch.py`（路径解析 / 解包 / 归组 / 名单 / 页序）与 `scanner/tests/test_service.py`（Flask 测试客户端直打接口，**部署前**就能拦住接线问题）。
   Two new offline suites: `scanner/tests/test_batch.py` and `scanner/tests/test_service.py` (drives the API through Flask's test client, catching wiring bugs **before** deployment).
 
+### Performance / 性能
+- **扫描服务识别速度提升 36 倍**：单张 A4@400dpi 从 **13.2s → 0.37s**（2 核容器实测），一个班
+  50 人 × 2 面从 20 多分钟降到约 40 秒。瓶颈是光照归一化里的背景估计 —— 对 14M 像素做 159×159
+  椭圆闭运算，单这一步就要 900ms，比整条识别其它部分加起来还多一个量级。背景是低频平滑场，
+  改为在 1/4 分辨率上估计再插值回来，核尺寸按原图算完再换算到小图（避免小图的 `max(15,…)`
+  下限引入相对更大的核），**物理邻域完全一致**：实测归一化结果与原实现逐像素最大差 9/255
+  （P99 = 6），三项识别率测试仍是 100%。新增回归测试钉住这个等价性。
+  **Scanner is 36× faster** — a single A4@400dpi sheet went from **13.2s to 0.37s** on a 2-core
+  container (a 50-student, 2-page class: 20+ minutes → ~40 seconds). The bottleneck was the
+  background estimate inside lighting normalization (a 159×159 elliptical close over 14M pixels,
+  900ms on its own). Estimating it at quarter resolution and interpolating back — with the kernel
+  computed at full scale then converted, so the physical neighbourhood is identical — leaves the
+  normalized image within 9/255 per pixel (P99 = 6) while all three accuracy suites stay at 100%.
+  A regression test now pins that equivalence.
+
 ### Fixed / 修复
 - **扫描服务：`data/` 目录不可写时整份识别结果被丢弃**。校对图写失败会连带把已经识别出来的答案一起变成「失败」——
   现在改成只降级：答案照常返回，接口标 `overlay: false`，前端显示原因而不是塞一个必然 404 的 `<img>`；

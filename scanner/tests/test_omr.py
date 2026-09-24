@@ -91,5 +91,41 @@ blank_answers = {1: {'answer': None, 'flag': 'blank'}, 2: {'answer': 'B', 'flag'
 ok(st.score(blank_answers, [1, 2], {2: 'B'}) == 1,
    '未作答且无标准答案的题不计分（满分应为 1）')
 
+print('\n=== E. 光照归一化：降采样背景与原分辨率等价 ===')
+# _lighting_normalize 为提速改成在 1/4 分辨率上估背景（原本 159×159 的椭圆闭运算
+# 在 14M 像素上要 ~900ms，整条识别就卡在这一步）。背景是低频平滑场，代价应该只是
+# 一点点量化误差。这条测试把「等价」钉住 —— 如果哪天核尺寸换算写错，这里会红。
+import numpy as np            # noqa: E402
+
+
+def reference_norm(gray):
+    """原分辨率版本，只用于对照。"""
+    h, w = gray.shape
+    k = max(15, (min(h, w) // 20) | 1)
+    bg = cv2.morphologyEx(gray, cv2.MORPH_CLOSE,
+                          cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    bg = cv2.GaussianBlur(bg, (0, 0), k / 4.0)
+    bg[bg == 0] = 1
+    return cv2.divide(gray, bg, scale=255)
+
+
+tmp = _fixtures.TMP
+worst_p99, worst_max = 0, 0
+for f in CLEAN:
+    p = _fixtures.photo_sim(os.path.join(FIX, f), os.path.join(tmp, 're_' + f), seed=5)
+    g = cv2.cvtColor(cv2.imread(p), cv2.COLOR_BGR2GRAY)
+    d = np.abs(omr._lighting_normalize(g).astype(int) - reference_norm(g).astype(int))
+    worst_p99 = max(worst_p99, int(np.percentile(d, 99)))
+    worst_max = max(worst_max, int(d.max()))
+ok(worst_p99 <= 8, f'与全分辨率背景场基本一致（P99 差异 {worst_p99}/255 ≤ 8）')
+ok(worst_max <= 16, f'最坏像素差异可忽略（{worst_max}/255）')
+
+# 小图不该走降采样分支（核会相对变大，语义就变了）—— 尺寸守卫生效即可
+small = np.full((40, 40), 200, np.uint8)
+small[10:14, 10:14] = 30
+ok(omr._lighting_normalize(small).shape == (40, 40), '小图（40×40）能正常处理不报错')
+ok(omr._lighting_normalize(np.full((80, 60), 255, np.uint8)).min() >= 254,
+   '纯白小图归一化后仍是白的（没有除零或饱和）')
+
 print('\n' + ('🎉 阅卷核心全部通过' if fails == 0 else f'⚠️ {fails} 项未通过'))
 sys.exit(0 if fails == 0 else 1)
