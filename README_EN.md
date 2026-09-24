@@ -33,9 +33,9 @@ your machine — everything runs in the browser. Package it as a Docker image to
 | --- | --- |
 | 🧩 **Modular question types** | Choice, fill-in-the-blank, free-response, student info and custom text blocks are independent modules — add, duplicate, delete and **drag to reorder**. |
 | 📄 **Fixed-size pagination** | Paper size stays **fixed regardless of content**; content flows face by face (front → back → next page). Each A3 face is two columns (two A4-wide columns). |
-| 🔤 **Bubble or handwritten** | Choice questions support **bracketed `[A]` bubbling** or **handwritten lines**; columns **auto-fit** the paper width so nothing overflows. |
+| 🔤 **Bubble or handwritten** | Choice questions support **bracketed `[A]` bubbling** or **handwritten lines**; any option count is allowed (beyond 26, labels continue `AA`, `AB`, …). Too many options wrap automatically, and columns are limited by paper width so nothing overflows. |
 | ✎ **Nested blank items** | Supports nested items like `11(1)`, `11(2)①/②`; the first sub-item stays inline with the question number, the rest wrap. Each blank's **length** and **row spacing** are adjustable. |
-| 📐 **Ruled answer areas** | Free-response areas can be **blank** or **ruled** with equal spacing; **line gap** and **box height** are configurable. |
+| 📐 **Ruled areas / figures** | Free-response areas can be **blank** or **ruled** with equal spacing; **line gap** and **box height** are configurable, and **each question can include a figure image** (compressed locally, stored in the browser). |
 | 🪪 **Student info bar** | Add/remove handwritten fields (class / name / exam number); the **exam-number grid** uses **bracket squares** and arranges the fields to its right to save space. |
 | 🖼 **Images** | Insert images and adjust **width (%) and alignment (left / center / right)**; compressed on upload and stored **only in the browser** — no server — and they appear in print / PDF output. |
 | ⬛ **Uniform black borders** | Every question block has a black border for a clear, print-friendly layout. |

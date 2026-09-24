@@ -8,8 +8,12 @@ All notable changes to this project are documented here.
 ### Added / 新增
 - 新增「图片」题型：可插入图片并调整**宽度与对齐**；上传时在本机自动压缩，**仅存浏览器缓存（localStorage）**，不上传、不增加服务器压力；打印 / 导出 PDF 时正常显示。
   New "Image" block: insert images with adjustable **width and alignment**; compressed locally on upload and stored **only in the browser (localStorage)** — no server load; renders in print / PDF.
-- 考号填涂区改为**中括号方块**样式，与选择题填涂风格统一。
-  Exam-number grid now uses **bracket squares**, consistent with choice bubbling.
+- **解答题每题可插入图片**（题干图）：在每题作答区上方显示，可调图片宽度。
+  **Per-question images in free-response blocks**: a figure shown above each answer area, with adjustable width.
+- **选择题支持任意选项数（2–60）**：字母按 `A…Z → AA, AB, …` 续排；选项过多时自动换行，并按纸张宽度与字号限制列数，**绝不溢出**。
+  **Choice questions support any option count (2–60)**: labels continue `A…Z → AA, AB, …`; when there are too many options they wrap automatically, and the column count is limited by paper width and font size so nothing overflows.
+- 考号填涂区：**中括号内直接显示数字**（`[0] [1] …`），顶部「考 号」跨列标题 + 手写行，一排数字即可。
+  Exam-number grid: **digits are shown inside the brackets** (`[0] [1] …`), with a spanning "考号" header and a write-in row.
 
 ### Fixed / 修复
 - 修复「通用样式」中**调整字号无反应**：子元素改用 `em`，随 `.blk` 字号整体缩放。
@@ -18,6 +22,8 @@ All notable changes to this project are documented here.
   Fixed **student-info alignment (left / center / right) having no effect**: alignment now drives the flex containers too.
 - 修复填空题**小题与小题之间（如 11（1）与（2）之间）行间距无效**：小题换行后按「行间距」拉开。
   Fixed **row spacing between sub-questions (e.g. 11(1) vs (2))** having no effect: wrapped sub-questions now honor the row-spacing value.
+- 修复填空题**小题内换行后（第一行与第二行）行距不跟随设置**：`line-height` 改为跟随「行间距」。
+  Fixed the **line spacing inside a sub-question (between wrapped lines)** not following the setting: `line-height` now tracks the row-spacing value.
 
 ## [1.0.0] - 2026-09-24
 

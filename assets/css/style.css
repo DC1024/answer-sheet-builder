@@ -63,6 +63,12 @@ button.danger{border-color:#e06a6a;color:#c0392b;}
 .qrow span{font-size:13px;min-width:48px;}
 .qrow input{width:70px;}
 .qrow button{padding:3px 8px;font-size:12px;}
+/* 解答题每题的图片配置卡片 */
+.qcard{border:1px dashed #cfe2f5;border-radius:8px;padding:6px 8px;margin:8px 0;}
+.qcard .qrow span{min-width:auto;}
+.qcard input[type=file]{width:100%;font-size:12px;}
+.img-thumb{margin-top:4px;border:1px solid #e6eaef;border-radius:6px;padding:4px;background:#fafcfe;text-align:center;}
+.img-thumb img{max-width:100%;max-height:110px;display:block;margin:0 auto;}
 .props .addbtn{margin-top:6px;width:100%;border-style:dashed;}
 
 /* 预览舞台 */
@@ -109,29 +115,33 @@ button.danger{border-color:#e06a6a;color:#c0392b;}
 .info-field-row .il{display:inline-block;border-bottom:1.5px solid var(--line);}
 
 .exam-grid{border:1.5px solid var(--line);border-radius:4px;padding:6px 8px;}
-.exam-grid .eg-title{font-size:0.93em;font-weight:700;margin-bottom:4px;}
-.exam-grid table{border-collapse:collapse;font-size:0.79em;}
-.exam-grid td,.exam-grid th{border:1px solid #b9c2cc;padding:1px 3px;text-align:center;}
-.exam-grid .pos{font-weight:700;}
-/* 考号填涂改为中括号方块（与选择题填涂风格一致） */
-.exam-grid .ebrk{display:inline-block;width:11px;height:11px;border:1.4px solid #333;vertical-align:middle;}
+.exam-grid table{border-collapse:collapse;font-size:0.82em;margin:0 auto;}
+.exam-grid td,.exam-grid th{border:1px solid #b9c2cc;padding:2px 4px;text-align:center;}
+.exam-grid .eg-head{font-weight:700;letter-spacing:4px;padding:4px;}
+.exam-grid .write{height:1.7em;min-width:1.6em;}
+/* 考号填涂：中括号内即为数字，呈 [0] [1] … */
+.exam-grid .ebrk{display:inline-flex;align-items:center;justify-content:center;min-width:1.15em;height:1.15em;padding:0 2px;border:1.4px solid #333;font-size:0.95em;line-height:1;vertical-align:middle;}
 
 /* 选择题 填涂/手写 */
 .sc-grid{display:grid;gap:4px 12px;}
-.scq{display:flex;align-items:center;gap:5px;padding:2px 0;min-width:0;justify-content:var(--jc,flex-start);}
+.scq{display:flex;align-items:center;gap:5px;row-gap:3px;flex-wrap:wrap;padding:2px 0;min-width:0;justify-content:var(--jc,flex-start);}
 .scq .scn{font-weight:800;min-width:22px;}
 .scq .bub{display:inline-flex;align-items:center;gap:2px;margin-right:5px;}
 .scq .bracket{display:inline-flex;align-items:center;justify-content:center;width:1.35em;height:1.35em;font-size:0.9em;border:1.5px solid #333;}
 .scq.hw .hw-line{flex:1;border-bottom:1.5px solid var(--line);min-height:14px;min-width:40px;}
 
 /* 填空 */
-.fill-q{line-height:1.6;margin:0 0 var(--fg,6mm);}
+/* line-height 也跟随「行间距」--> 修复：小题内换行后（第一行与第二行）行距不生效 */
+.fill-q{line-height:max(1.4em, var(--fg,6mm));margin:0 0 var(--fg,6mm);}
 .fill-blank{display:inline-block;border-bottom:1.5px solid var(--line);vertical-align:middle;margin:0 4mm 0 2mm;width:30mm;height:16px;}
 
 /* 解答 */
-.ans-box{border:2px solid var(--line);border-radius:4px;display:flex;flex-direction:column;break-inside:avoid;margin-bottom:4mm;overflow:hidden;}
+.ans-box{border:2px solid var(--line);border-radius:4px;break-inside:avoid;margin-bottom:4mm;overflow:hidden;}
 .ans-box .ah{font-size:1em;font-weight:800;padding:6px 10px;border-bottom:1px solid var(--line);}
-.ans-box .ab{flex:1;}
+/* item 1：每题可插入图片（题干图），置于作答区上方 */
+.ans-box .ans-img{padding:5px 10px;}
+.ans-box .ans-img + .ab{border-top:1px dashed #cbd3dc;}
+.ans-box .ab{display:block;}
 /* 横线样式（item 4）：在作答区内画等距横线，间距由 --lg 控制（item 5） */
 .ans-box .ab.lined{
   background-image:repeating-linear-gradient(to bottom,

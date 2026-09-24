@@ -88,12 +88,15 @@ export default {
   _gridHtml(config){
     if (!config.examGrid) return '';
     const n = Math.max(4, Math.min(12, +config.examDigits || 8));
-    let head = '<tr><th></th>' + Array.from({ length: n }, (_, i) => `<th class="pos">${i + 1}</th>`).join('') + '</tr>';
+    // 顶部：考号标题（跨列）
+    const head = `<tr><th class="eg-head" colspan="${n}">考 号</th></tr>`;
+    // 手写行：空框，供考生手写考号
+    const write = `<tr>${Array.from({ length: n }, () => '<td class="write"></td>').join('')}</tr>`;
+    // 数字行：中括号内即为数字（0–9），一排数字即可（不再另加题号列）
     let rows = '';
     for (let d = 0; d <= 9; d++){
-      rows += `<tr><td class="pos">${d}</td>` + Array.from({ length: n }, () => `<td><span class="ebrk"></span></td>`).join('') + '</tr>';
+      rows += `<tr>${Array.from({ length: n }, () => `<td><span class="ebrk">${d}</span></td>`).join('')}</tr>`;
     }
-    return `<div class="exam-grid"><div class="eg-title">考号填涂区（用 2B 铅笔填涂对应数字）</div>
-      <table>${head}${rows}</table></div>`;
+    return `<div class="exam-grid"><table>${head}${write}${rows}</table></div>`;
   }
 };
