@@ -4,6 +4,7 @@ import { registry } from './core/registry.js';
 import { renderPreview } from './core/preview.js';
 import { uid, deepClone, compressImage, mmPx } from './core/util.js';
 import { setAnsTarget, ansTargetFor, clearAnsTarget } from './core/uistate.js';
+import { exportOmrTemplate, omrTemplateFileName } from './core/omr.js';
 
 let dragId = null;
 let dropTarget = null;
@@ -494,6 +495,19 @@ function bindToolbar(){
     const r = new FileReader();
     r.onload = () => { try { store.import(JSON.parse(r.result)); applyPaper(); fullRender(); } catch(err){ alert('JSON 解析失败，请检查文件格式。'); } };
     r.readAsText(f); e.target.value = '';
+  });
+  document.getElementById('btn-omr').addEventListener('click', () => {
+    const tpl = exportOmrTemplate(document.getElementById('sheet'));
+    if (!tpl.questionCount){
+      alert('这份卷子没有可识别的填涂圈 —— 阅卷模板只支持「填涂」样式的选择题（手写横线样式没有填涂圈可定位）。');
+      return;
+    }
+    const blob = new Blob([JSON.stringify(tpl, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = omrTemplateFileName(tpl);
+    a.click();
+    toast(`阅卷模板已导出：${tpl.questionCount} 题 / ${tpl.pages.length} 面`);
   });
   document.getElementById('btn-reset').addEventListener('click', () => {
     if (confirm('确定重置为默认模板？当前未保存的修改将丢失。')){ store.reset(defaultBlocks()); applyPaper(); fullRender(); }

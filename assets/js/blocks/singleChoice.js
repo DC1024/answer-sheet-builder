@@ -33,9 +33,10 @@ function optLabels(n){
 // 单题 HTML：题号与选项分离 —— .scn 固定不换行，.opts 内每个选项是原子块（不会跨行拆开），
 // 放不下时整块下移，避免「题号孤零零占一行」或「选项被劈成两半」。
 function qHtml(no, letters, mode){
-  if (mode !== 'bubble') return `<div class="scq hw"><span class="scn">${no}.</span><span class="hw-line"></span></div>`;
-  const cells = letters.map(l => `<span class="bub"><span class="bracket">${l}</span></span>`).join('');
-  return `<div class="scq"><span class="scn">${no}.</span><span class="opts">${cells}</span></div>`;
+  // data-q / data-opt 供「导出阅卷模板」定位每个填涂圈（不影响渲染外观）
+  if (mode !== 'bubble') return `<div class="scq hw" data-q="${no}" data-mode="hw"><span class="scn">${no}.</span><span class="hw-line"></span></div>`;
+  const cells = letters.map(l => `<span class="bub" data-opt="${esc(l)}"><span class="bracket">${l}</span></span>`).join('');
+  return `<div class="scq" data-q="${no}" data-mode="bubble"><span class="scn">${no}.</span><span class="opts">${cells}</span></div>`;
 }
 
 export default {

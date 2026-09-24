@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 本项目所有重要变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.2] - 2026-09-25
+
+### Added / 新增
+- **导出「阅卷模板」**：工具栏新增 `🎯 阅卷模板`，一键导出 `asb-omr-template-<纸张>-<题数>q-<时间戳>.json`（例：`asb-omr-template-A4-20q-20260925-0140.json`），里面是**每个填涂圈在页面上的毫米坐标**（含四角定位点、纸张尺寸、题号与选项），供配套的 [answer-sheet-scanner](../answer-sheet-scanner) 扫描识别服务做透视矫正与填涂判定。卷子里没有填涂圈模式的选择题时会明确提示，不会导出一份空模板。
+  **Export a machine-readable answer-sheet template** (`asb-omr-template-*.json`) with the **millimetre coordinates of every bubble** (plus corner marks, paper size, question and option labels) for the companion [answer-sheet-scanner](../answer-sheet-scanner) service to do perspective correction and bubble detection against. Warns clearly when the sheet has no bubble-mode choice questions.
+- 选择题填涂圈在导出的 HTML 上带 `data-q` / `data-opt` / `data-mode` 坐标钩子，便于外部脚本或自建识别流程直接遍历 DOM。
+  Bubble options now carry `data-q` / `data-opt` / `data-mode` hooks in the exported HTML for external scripts.
+
 ## [1.0.1] - 2026-09-25
 
 ### Added / 新增
@@ -99,5 +107,6 @@ All notable changes to this project are documented here.
 - Docker 部署（`Dockerfile` + `docker-compose.yml`），纯静态无需后端。
   Docker deployment; pure static, no backend.
 
+[1.0.2]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.2
 [1.0.1]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.1
 [1.0.0]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.0

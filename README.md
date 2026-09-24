@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.1"><img alt="version" src="https://img.shields.io/badge/version-1.0.1-blue"></a>
+  <a href="https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.2"><img alt="version" src="https://img.shields.io/badge/version-1.0.2-blue"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="no backend" src="https://img.shields.io/badge/backend-none-success">
   <a href="https://github.com/DC1024/answer-sheet-builder/actions/workflows/docker.yml"><img alt="docker build" src="https://github.com/DC1024/answer-sheet-builder/actions/workflows/docker.yml/badge.svg"></a>
@@ -108,6 +108,25 @@ docker run -d --name asb -p 8080:80 ghcr.io/dc1024/answer-sheet-builder:latest
 4. 顶栏选择纸张（A3 / A4）与方向（竖版 / 横版），中间预览按**固定尺寸逐面**显示。
 5. 点「🖨 打印 / 导出 PDF」，在打印对话框选择对应纸张、勾选「双面（长边翻转）」，另存为 PDF 或直接打印。
 
+## 配套：扫描识别服务（自动阅卷）
+
+排好卷子只是上半场 —— 学生作答、收卷之后，`🎯 阅卷模板` 能把这份卷子变成机器可读的坐标文件，
+交给配套的 **[answer-sheet-scanner](../answer-sheet-scanner)** 服务自动识读选择题并出班级统计。
+
+```
+制卡端排卷  ──▶  点「🎯 阅卷模板」  ──▶  asb-omr-template-*.json  ──▶  scanner 服务
+                                                                          │
+                                     扫描 / 拍照 ────────────────────────┘
+                                                                          │
+                                                          每题答案 + 存疑标注 + 班级统计 + CSV
+```
+
+导出的模板里含**每个填涂圈的毫米坐标**、四角定位点、纸张尺寸与题号选项。扫描服务据此做
+透视矫正后逐圈采样，纯 OpenCV 实现、不下载模型、可离线运行。实测（6 份合成卷 × 20 题）：
+干净扫描 **100%**、手机拍照模拟 **100%**，未涂题自动标 `blank`、浅涂题自动标 `faint`。
+
+> 前提：卷子里要有**填涂圈模式**的选择题；全是手写作答模式时会提示「没有可识别的填涂圈」。
+
 ## 目录结构（模块化）
 
 ```
@@ -124,7 +143,9 @@ answer-sheet-builder/
 │           ├── util.js     # esc / uid / 深拷贝 / 通用样式
 │           ├── store.js    # 全局状态（blocks 数组、增删改移、持久化）
 │           ├── registry.js # 题型注册表（聚合模块，便于扩展）
-│           └── preview.js  # 固定纸张分页引擎
+│           ├── preview.js  # 固定纸张分页引擎
+│           ├── uistate.js  # 纯运行期 UI 状态（当前作答区等，不写入模板）
+│           └── omr.js      # 导出阅卷模板（每面定位点 + 每个填涂圈的 mm 坐标）
 │       └── blocks/         # 各题型模块（每个含 defaults / configUI / render）
 │           ├── info.js
 │           ├── singleChoice.js
