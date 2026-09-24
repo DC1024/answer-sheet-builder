@@ -6,6 +6,16 @@ All notable changes to this project are documented here.
 ## [未发布] / [Unreleased]
 
 ### Added / 新增
+- **撤销 / 重做**：快照式历史（最多 100 步），连续输入会按 0.7s 时间窗合并为一步；工具栏 `↶ 撤销 / ↷ 重做`（无历史时置灰），快捷键 **Ctrl+Z / Ctrl+Y（或 Ctrl+Shift+Z）**。
+  **Undo / redo**: snapshot history (up to 100 steps) with a 0.7s coalescing window for continuous typing; toolbar buttons grey out when unavailable; **Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z)**.
+- **复制 / 剪切 / 粘贴**：**Ctrl+C / Ctrl+X / Ctrl+V** 复制选定模块到应用内剪贴板并插到其后；剪贴板里是模块 JSON 时也能直接粘贴；选中「图片」模块时 **Ctrl+V 可直接粘贴剪贴板中的图片**（本机压缩后存储）。文本框内一律让给浏览器原生行为，不劫持。
+  **Copy / cut / paste** with **Ctrl+C / Ctrl+X / Ctrl+V**; a module JSON on the clipboard also pastes; with an Image block selected, **Ctrl+V pastes an image from the clipboard** (compressed locally). Keystrokes inside text fields are left to the browser.
+- 选择题新增**「行间距(mm)」**：填涂与手写（横线）两种样式都生效 —— 手写样式尤其需要留出书写高度。
+  New **row spacing (mm)** for choice questions, effective in both bubble and handwritten styles.
+- 填空题**分层自动编号**：小题 `（1）（2）` → 小小题 `①②` → 再深 `a) b)`，各层一眼可区分；留空即自动编号、填写则手写覆盖。旧模板里那批硬编码的 `（1）（1）（1）` 会自动重算。
+  **Layered auto-numbering** for fill-in-blank: sub `(1)(2)` → sub-sub `①②` → deeper `a) b)`; blank means auto, typed text overrides. Legacy hard-coded `(1)(1)(1)` is re-derived.
+- 属性面板提示：结构面板新增快捷键说明条；操作后有「已复制 / 已剪切 / 已撤销」轻提示。
+  Shortcut hint bar in the structure panel and toasts for copy / cut / undo.
 - **四角定位点**：支持「方块 / 三角」两种样式，可调边长（2–10mm）。每一面（A3 正反面、A4 各页）**只有含题目内容时才自动加上四角定位点**，空白面不加；打印时强制输出底色（`print-color-adjust: exact`）。
   **Corner registration marks** in **square / triangle** styles with adjustable size (2–10mm). Every face that **contains content** automatically gets four corner marks — blank faces get none; rendered in print via `print-color-adjust: exact`.
 - 新增「图片」题型：可插入图片并调整**宽度与对齐**；上传时在本机自动压缩，**仅存浏览器缓存（localStorage）**，不上传、不增加服务器压力；打印 / 导出 PDF 时正常显示。
@@ -14,16 +24,24 @@ All notable changes to this project are documented here.
   **Per-question images in free-response blocks**: a figure shown above each answer area, with adjustable width.
 - **选择题支持任意选项数（2–60）**：字母按 `A…Z → AA, AB, …` 续排。
   **Choice questions support any option count (2–60)**: labels continue `A…Z → AA, AB, …`.
-- 考号填涂区：**中括号内直接显示数字**（`[0] [1] …`），顶部「考 号」跨列标题 + 手写行，一排数字即可；位数上限提升至 20（超过 12 位整表按 `em` 等比缩小）。
-  Exam-number grid: **digits are shown inside the brackets** (`[0] [1] …`), spanning header + write-in row; digit cap raised to 20 (scales down proportionally beyond 12).
+- 考号填涂区：**中括号内直接显示数字**（`[0] [1] …`），顶部「考 号」跨列标题 + 手写行，一排数字即可；位数上限提升至 20。
+  Exam-number grid: **digits are shown inside the brackets** (`[0] [1] …`), spanning header + write-in row; digit cap raised to 20.
 - **选择题列数改为「渲染时实测」**：把单题渲染到离屏容器量真实宽度后决定列数，字号、字体度量、多字符字母都自动算准，不再依赖手写常量。
   **Choice column count is now measured at render time** instead of estimated from hard-coded constants.
+
+### Changed / 变更
+- **分页改为严格「面 → 栏」顺序填充**：先把第一页第一面第一栏填满，再第二栏；第一面满了才用第二面，然后是第二页第一面、第二面……不再挑「最矮栏」做均衡（均衡会让内容左右跳跃，读起来是乱序的）。
+  **Pagination now fills strictly in face → column order** instead of balancing column heights.
+- **填空题改为「行内流式」**：一行没用完就继续把后面的小题放在同一行，排满才换行；每个小题包成原子块，换行时整块下移，不会把「（2）+ 空格」拆开。
+  **Fill-in-blank now flows inline**: sub-questions keep filling the same line until it is full; each sub-item is atomic so it never splits across lines.
+- **考号填涂区宽度加上限**：默认不超过**页面宽度的 1/4**（可在属性面板调 10–60%），把宽度让给右侧手写栏。上限内会把方框撑到尽量大（3–5mm）——唯一例外是上限内连 **3mm 可填涂下限**都放不下时（位数很多 / 纸张较小），此时自动放宽到刚好放得下，且永不超出纸张。实测：A3 16 位 87.6→**74.5mm**（25% 页宽），A4 16 位 107.3→**63.9mm**，A4 20 位 133.0→**78.8mm**。
+  **The exam-number grid is now width-capped** at **1/4 of the page width** by default (adjustable 10–60%). Bubbles are still pushed to 3–5mm inside the cap; the only exception is when even the **3mm fillable minimum** cannot fit — then the cap is relaxed just enough, never overflowing the paper. Measured: A3 16 digits 87.6→**74.5mm** (25% of page width), A4 16 digits 107.3→**63.9mm**, A4 20 digits 133.0→**78.8mm**.
 
 ### Fixed / 修复
 - **定位点不再压住内容**：定位点此前固定内缩 4mm、而内容区从 7mm 就开始，必然与区块边框 / 横线重叠。现在页内边距由「定位点占用的页边距带」反推（内缩 + 边长 + 1mm 空隙），定位点永远落在页边距内；实测与内容最小间距 1.01mm、重叠面积 0mm²（4mm / 8mm 边长均成立）。
   **Corner marks no longer overlap content.** They used to sit at a fixed 4mm inset while content started at 7mm, so they inevitably collided with block borders. Page padding is now derived from the band the marks occupy (inset + size + 1mm clearance); measured clearance is 1.01mm with 0mm² overlap (verified at 4mm and 8mm).
-- **考号填涂格可填涂性 / 可读性**：不再用 `12/位数` 硬缩字号，改为**由可用宽度直接反推方框边长**（3–5mm），且相邻间距按格宽自适应（宽格留大间距、紧格贴紧排）。实测提升：A3 16 位 3.25→**4.18mm**、20 位 2.92→**3.45mm**，8/12 位与 A4 全部顶到 5mm；填涂区只占所需宽度，余量交给右侧手写栏拉满，右侧不再留白。过程中会优先压缩手写栏、仍不够才缩小方框。
-  **Fillability / legibility of the exam-number grid**: the old `12/digits` font shrink is gone. The bubble edge length is now derived from the available width (3–5mm) and the gap adapts to the cell width. Measured gains: A3 16 digits 3.25→**4.18mm**, 20 digits 2.92→**3.45mm**; 8/12 digits and all A4 cases hit the 5mm cap. The grid occupies only the width it needs and the fields column stretches to fill the rest.
+- **考号填涂格可填涂性 / 可读性**：不再用 `12/位数` 硬缩字号，改为**由宽度反推方框边长**（3–5mm），相邻间距按格宽自适应（宽格留大间距、紧格贴紧排）。实测：A3 16 位 3.25→**3.67mm**（并受 1/4 页宽上限约束）、8 位顶到 5mm 上限，所有组合均 ≥3mm、零溢出。位数较多时会先压缩右侧手写栏，仍不够才缩小方框。
+  **Fillability / legibility of the exam-number grid**: the old `12/digits` font shrink is gone. The bubble edge length is now derived from the available width (3–5mm) and the gap adapts to the cell width. Measured: A3 16 digits 3.25→**3.67mm** (under the 1/4-page-width cap), 8 digits hits the 5mm ceiling; every combination stays ≥3mm with zero overflow.
 - **属性面板排版**：`每行题数（上限，放不下时自动减少列数以保证每题完整）` 这类长标签会把一行撑成三行，导致同行两个输入框一高一低错位。标签统一精简为一行、说明移入 `hint`，并让两列输入框底部对齐；实测全部标签单行、输入框底部差 0px。
   **Properties panel layout**: long labels used to wrap to three lines and knock the two inputs in a row out of alignment. Labels are now single-line with the explanation moved to a hint, and inputs in a row are bottom-aligned (measured: all labels single-line, 0px bottom offset).
 - 修复选择题换行逻辑：改为**保证「题号 + 全部选项」在单行内完整排下**，排不下的整题换到下一行 —— 不再出现「某题最后一个选项被挤到第二行」。（A3 双栏 + 4 选项 + 14px 实测由「5 列全部折行」修正为「4 列全部整行」。）

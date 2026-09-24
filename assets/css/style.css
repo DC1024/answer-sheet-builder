@@ -13,6 +13,22 @@ button:hover{background:#f1f4f8;}
 button.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
 button.primary:hover{background:#245a93;}
 button.danger{border-color:#e06a6a;color:#c0392b;}
+button:disabled{opacity:.45;cursor:not-allowed;background:#f3f5f8;}
+button:disabled:hover{background:#f3f5f8;}
+
+/* 操作轻提示（复制 / 剪切 / 撤销 …） */
+#toast{
+  position:fixed;left:50%;bottom:28px;transform:translate(-50%,12px);
+  background:rgba(28,36,48,.92);color:#fff;font-size:13px;line-height:1;
+  padding:10px 16px;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.22);
+  opacity:0;pointer-events:none;transition:opacity .16s ease,transform .16s ease;z-index:9999;
+}
+#toast.on{opacity:1;transform:translate(-50%,0);}
+
+/* 面板内说明文字 */
+.panehint{font-size:12px;line-height:1.6;color:#8a94a0;background:#f7fafc;border:1px solid #e6eaef;
+  border-radius:6px;padding:6px 8px;margin-bottom:10px;}
+.panehint b{color:#4a596b;}
 
 /* 顶栏 */
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:#fff;border-bottom:1px solid #d7dde5;flex:0 0 auto;}
@@ -151,7 +167,8 @@ button.danger{border-color:#e06a6a;color:#c0392b;}
 }
 
 /* 选择题 填涂/手写 */
-.sc-grid{display:grid;gap:4px 12px;align-items:start;}
+/* row-gap 由 --hg 驱动（选择题的「行间距」设置，默认 1mm ≈ 原来的 4px） */
+.sc-grid{display:grid;gap:var(--hg,4px) 12px;align-items:start;}
 /* 题号与选项分离：选项在 .opts 内自动换行，第 2 行起对齐到第一个选项下方 */
 .scq{display:flex;align-items:flex-start;gap:5px;padding:2px 0;min-width:0;}
 .scq .scn{font-weight:800;min-width:1.6em;flex:0 0 auto;}
@@ -163,6 +180,11 @@ button.danger{border-color:#e06a6a;color:#c0392b;}
 /* 填空 */
 /* line-height 也跟随「行间距」--> 修复：小题内换行后（第一行与第二行）行距不生效 */
 .fill-q{line-height:max(1.4em, var(--fg,6mm));margin:0 0 var(--fg,6mm);}
+/* 行内流式：一行没排满就继续往同一行放，排满才换行。
+   每个小题是原子块（inline-block）→ 换行时整块下移，不会把「（2）」和它的空格拆开；
+   max-width:100% 保证单个小题自身过宽时内部换行，而不是撑出纸张。 */
+.fb-item{display:inline-block;max-width:100%;margin-right:3mm;vertical-align:top;}
+.fb-tag{margin-right:1px;}
 .fill-blank{display:inline-block;border-bottom:1.5px solid var(--line);vertical-align:middle;margin:0 4mm 0 2mm;width:30mm;height:16px;}
 
 /* 解答 */

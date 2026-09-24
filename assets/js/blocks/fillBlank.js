@@ -1,10 +1,31 @@
 // 模块：填空题（支持多级小题，每空可独立设置长度）
+// 编号规则（分层，互不混淆）：
+//   大题      11.           ← 每行一题，题号自动累加
+//   小题      （1）（2）…     ← 第 1 层
+//   小小题    ①②③…         ← 第 2 层
+//   再深一层  a) b) c)      ← 第 3 层
+// 节点的 label 留空即「自动编号」；填了内容则作为手写编号（覆盖自动值）。
 import { esc, commonStyle } from '../core/util.js';
 
 const blankDef = () => ({ len: 30 });
-const nodeDef = (isRoot) => ({ label: isRoot ? '' : '（1）', blanks: [blankDef()], subs: [] });
+// label 留空 = 自动编号（旧版这里硬编码 '（1）'，导致任何层级新增小题都是（1））
+const nodeDef = () => ({ label: '', blanks: [blankDef()], subs: [] });
 
-// 兼容旧模板：以前 questions 的 blanks 是数字
+const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
+
+// 按「层级 + 序号」生成自动编号，保证不同层级一眼可区分
+function autoLabel(depth, i){
+  if (depth <= 1) return `（${i + 1}）`;
+  if (depth === 2) return CIRCLED[i] || `(${i + 1})`;
+  if (depth === 3) return `${String.fromCharCode(97 + (i % 26))})`;
+  return `(${i + 1})`;
+}
+function levelName(depth){
+  return depth === 0 ? '第 %d 题' : (depth === 1 ? '小题 %d' : (depth === 2 ? '小小题 %d' : '第 %d 级'));
+}
+
+// 兼容旧模板：blanks 曾是数字；并清掉「恰好等于自动编号」的手写 label，
+// 让历史模板里那批（1）（1）（1）重新走自动编号（等价内容重算，不会丢信息）。
 function normalize(config){
   if (!Array.isArray(config.questions)) config.questions = [];
   config.questions = config.questions.map(q => {
@@ -14,18 +35,26 @@ function normalize(config){
     }
     return q;
   });
+  config.questions.forEach(q => stripAutoLabels(q.subs, 1));
   if (config.questions.length === 0){
     config.questions = [
       { label: '', blanks: [], subs: [
-        { label: '（1）', blanks: [blankDef(), blankDef()], subs: [] },
-        { label: '（2）', blanks: [], subs: [
-          { label: '①', blanks: [blankDef()], subs: [] },
-          { label: '②', blanks: [blankDef(), blankDef(), blankDef()], subs: [] }
+        { label: '', blanks: [blankDef(), blankDef()], subs: [] },
+        { label: '', blanks: [], subs: [
+          { label: '', blanks: [blankDef()], subs: [] },
+          { label: '', blanks: [blankDef(), blankDef(), blankDef()], subs: [] }
         ]}
       ]},
       { label: '', blanks: [blankDef(), blankDef(), blankDef()], subs: [] }
     ];
   }
+}
+function stripAutoLabels(nodes, depth){
+  if (!Array.isArray(nodes)) return;
+  nodes.forEach((n, i) => {
+    if (n && typeof n.label === 'string' && n.label.trim() === autoLabel(depth, i)) n.label = '';
+    if (n && Array.isArray(n.subs)) stripAutoLabels(n.subs, depth + 1);
+  });
 }
 
 export default {
@@ -39,10 +68,10 @@ export default {
       gap: 6,
       questions: [
         { label: '', blanks: [], subs: [
-          { label: '（1）', blanks: [blankDef(), blankDef()], subs: [] },
-          { label: '（2）', blanks: [], subs: [
-            { label: '①', blanks: [blankDef()], subs: [] },
-            { label: '②', blanks: [blankDef(), blankDef(), blankDef()], subs: [] }
+          { label: '', blanks: [blankDef(), blankDef()], subs: [] },
+          { label: '', blanks: [], subs: [
+            { label: '', blanks: [blankDef()], subs: [] },
+            { label: '', blanks: [blankDef(), blankDef(), blankDef()], subs: [] }
           ]}
         ]},
         { label: '', blanks: [blankDef(), blankDef(), blankDef()], subs: [] }
@@ -64,7 +93,7 @@ export default {
       </label>
       <div id="fb-tree"></div>
       <button class="addbtn" data-act="add-root">+ 增加大题</button>
-      <p class="hint">大题可拆成多级小题（如 11（1）、11（2）①/②）；行间距同时作用于大题之间与小题之间。每空长度单位 mm。</p>
+      <p class="hint">小题编号按层级自动生成：小题为（1）（2）、小小题为①②、再深为 a) b)。留空即自动编号，填内容可手写覆盖。行间距同时作用于大题之间与折行后的行距。</p>
     `;
 
     const tree = container.querySelector('#fb-tree');
@@ -81,7 +110,7 @@ export default {
     container.querySelector('[data-k="title"]').addEventListener('input', e => { config.title = e.target.value; onChange(); });
     container.querySelector('[data-k="startNo"]').addEventListener('input', e => { config.startNo = parseInt(e.target.value) || 1; onChange(); });
     container.querySelector('[data-k="gap"]').addEventListener('input', e => { config.gap = parseInt(e.target.value) || 6; onChange(); });
-    container.querySelector('[data-act="add-root"]').addEventListener('click', () => { config.questions.push(nodeDef(true)); rerender(); });
+    container.querySelector('[data-act="add-root"]').addEventListener('click', () => { config.questions.push(nodeDef()); rerender(); });
     renderTree();
   },
 
@@ -90,26 +119,51 @@ export default {
     const start = Math.max(1, +config.startNo || 1);
     const gap = Math.max(2, parseInt(config.gap) || 6);
     const html = config.questions.map((q, i) =>
-      `<div class="fill-q">${renderNode(q, start + i, 0, gap)}</div>`
+      `<div class="fill-q">${renderNode(q, start + i, 0, i, gap)}</div>`
     ).join('');
     return `<div class="blk" style="${commonStyle(config)};--fg:${gap}mm"><div class="blk-title">${esc(config.title)}</div>${html}</div>`;
   }
 };
 
-// 递归渲染配置节点
+// 递归渲染配置节点 —— 全部按「行内流式」输出：
+// 一行没排满就继续往同一行放，排满才自动换行（不再强制每个小题单独占一行）。
+// 每个可独立的小题包成 .fb-item（inline-block）→ 换行时整块移动，不会把「（2）+空格」拆开。
+function renderNode(node, autoNo, depth, index, gap){
+  const label = (node.label && node.label.trim()) ||
+                (depth === 0 ? `${autoNo}.` : autoLabel(depth, index));
+  const tag = label ? `<b class="fb-tag">${esc(label)}</b>` : '';
+  const blanks = (node.blanks || [])
+    .map(b => `<span class="fill-blank" style="width:${b.len}mm"></span>`).join('');
+
+  const subs = (node.subs || []);
+  if (!subs.length) return `<span class="fb-item">${tag}${blanks}</span>`;
+
+  const inner = subs.map((s, i) => renderNode(s, null, depth + 1, i, gap)).join('');
+  if (depth === 0){
+    // 大题：题号与各小题平铺（小题之间可自由换行），整块不锁死，才能「排满一行再换行」
+    return `${tag}${blanks}${inner}`;
+  }
+  return `<span class="fb-item">${tag}${blanks}${inner}</span>`;
+}
+
+// 递归构建配置面板的节点卡片
 function buildNode(node, depth, index, onChange, removeSelf, rerender){
   const card = document.createElement('div');
   card.className = 'node-card';
   card.style.cssText = `margin-top:8px;margin-left:${depth * 14}px;padding-left:8px;border-left:2px solid #cfe2f5;`;
 
-  // 标题行：标签输入 + 删除
+  const auto = autoLabel(Math.max(1, depth), index);
+  const shown = (node.label && node.label.trim()) || auto;
+
+  // 标题行：显示当前生效编号 + 手写覆盖输入 + 删除
   const top = document.createElement('div');
   top.className = 'qrow';
-  top.innerHTML = `<span>${depth === 0 ? '第 ' + (index + 1) + ' 题' : '小题 ' + (index + 1)}</span>`;
+  top.innerHTML = `<span>${(depth === 0 ? '第 ' + (index + 1) + ' 题' : levelName(depth).replace('%d', shown))}</span>`;
   const labelIn = document.createElement('input');
   labelIn.type = 'text';
   labelIn.value = node.label || '';
-  labelIn.placeholder = depth === 0 ? '自动编号' : '例如：（1）';
+  labelIn.placeholder = `自动：${auto}`;
+  labelIn.title = '留空即按层级自动编号；填写则作为手写编号';
   labelIn.style.flex = '1';
   labelIn.addEventListener('input', () => { node.label = labelIn.value; onChange(); });
   top.appendChild(labelIn);
@@ -150,8 +204,9 @@ function buildNode(node, depth, index, onChange, removeSelf, rerender){
   addBlank.textContent = '+ 空格';
   addBlank.addEventListener('click', () => { node.blanks.push(blankDef()); rerender(); });
   const addSub = document.createElement('button');
-  addSub.textContent = '+ 小题';
-  addSub.addEventListener('click', () => { if (!node.subs) node.subs = []; node.subs.push(nodeDef(false)); rerender(); });
+  addSub.textContent = depth === 0 ? '+ 小题' : '+ 小小题';
+  addSub.title = '新增一层更细的编号（小题 → ①② → a)）';
+  addSub.addEventListener('click', () => { if (!node.subs) node.subs = []; node.subs.push(nodeDef()); rerender(); });
   btnRow.append(addBlank, addSub);
   card.appendChild(btnRow);
 
@@ -167,31 +222,4 @@ function buildNode(node, depth, index, onChange, removeSelf, rerender){
   }
 
   return card;
-}
-
-// 递归渲染预览节点（返回内联内容，外层由 render 包成 .fill-q 块）
-// item 3：顶层大题的第一个小题紧跟题号内联，其余小题（如（2））才换行；更深层级（① ②）一律内联。
-// item 5：顶层大题内部，各小题换行后按「行间距」拉开（修复：小题与小题之间行间距无效）。
-function renderNode(node, autoNo, depth = 0, gap = 6){
-  const label = node.label || (depth === 0 ? (autoNo + '.') : '');
-  const tag = label ? `<b>${esc(label)}</b>` : '';
-
-  // 叶子：只有空格
-  if (!(node.subs && node.subs.length)){
-    const blanks = (node.blanks || []).map(b => `<span class="fill-blank" style="width:${b.len}mm"></span>`).join(' ');
-    return `${tag} ${blanks}`;
-  }
-
-  if (depth === 0){
-    // 顶层大题：第一小题内联，其余小题各自成行并按行间距拉开
-    const parts = node.subs.map((s, idx) =>
-      idx === 0
-        ? renderNode(s, null, 1, gap)
-        : `<div class="sub-line" style="margin-top:${gap}mm">${renderNode(s, null, 1, gap)}</div>`
-    ).join('');
-    return `${tag}${parts}`;
-  }
-  // 更深层级（如（2）下的 ① ②）：全部内联
-  const inner = node.subs.map(s => renderNode(s, null, depth + 1, gap)).join(' ');
-  return `${tag}${inner}`;
 }

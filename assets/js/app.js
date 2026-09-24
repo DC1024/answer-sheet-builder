@@ -2,10 +2,11 @@
 import { store } from './core/store.js';
 import { registry } from './core/registry.js';
 import { renderPreview } from './core/preview.js';
-import { uid } from './core/util.js';
+import { uid, deepClone, compressImage } from './core/util.js';
 
 let dragId = null;
 let dropTarget = null;
+let clipBlock = null;            // 应用内复制的模块（Ctrl+C / Ctrl+X）
 
 /* ---------- 默认模板 ---------- */
 function defaultBlocks(){
@@ -45,14 +46,143 @@ function renderPreviewAndGuides(){
   renderPreview(sheet);
 }
 
+/* ---------- 轻提示 ---------- */
+let toastTimer = null;
+function toast(msg){
+  let el = document.getElementById('toast');
+  if (!el){
+    el = document.createElement('div');
+    el.id = 'toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('on'), 1600);
+}
+
+/* ---------- 剪贴板 / 快捷键 ---------- */
+function isTextField(el){
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+}
+
+function copySelected(){
+  const b = store.getBlock(store.selectedId);
+  if (!b) return false;
+  clipBlock = deepClone({ type: b.type, config: b.config });
+  toast('已复制：' + ((registry.get(b.type) || {}).name || b.type));
+  return true;
+}
+
+function cutSelected(){
+  const b = store.getBlock(store.selectedId);
+  if (!b) return false;
+  clipBlock = deepClone({ type: b.type, config: b.config });
+  store.removeBlock(b.id);
+  toast('已剪切：' + ((registry.get(b.type) || {}).name || b.type));
+  return true;
+}
+
+// 粘贴：① 剪贴板里有图片且当前选中「图片」模块 → 贴图；② 应用内复制过模块 → 插到其后；
+//       ③ 剪贴板文本是单个模块 JSON → 也直接插入
+function pasteFromEvent(ev){
+  const dt = ev.clipboardData;
+  if (!dt) return false;
+
+  const sel = store.getBlock(store.selectedId);
+
+  if (dt.items){
+    for (const it of dt.items){
+      if (it.kind === 'file' && /^image\//.test(it.type)){
+        if (sel && sel.type === 'image'){
+          const f = it.getAsFile();
+          if (f){
+            compressImage(f, ok => {
+              if (!ok) return;
+              sel.config.src = ok.url;
+              sel.config.ratio = ok.ratio;
+              store.commit('paste-img');
+              store.emit();
+              toast('图片已粘贴（本地压缩，仅存浏览器缓存）');
+            });
+            return true;
+          }
+        }
+        toast('图片需选中「图片」模块后才能粘贴');
+        return true;
+      }
+    }
+  }
+
+  const insertAt = () => {
+    const idx = store.blocks.findIndex(b => b.id === store.selectedId);
+    return idx < 0 ? store.blocks.length : idx + 1;
+  };
+
+  if (clipBlock){
+    store.insertBlock(insertAt(), clipBlock);
+    toast('已粘贴模块');
+    return true;
+  }
+
+  const text = dt.getData('text/plain');
+  if (text){
+    try {
+      const d = JSON.parse(text);
+      if (d && typeof d === 'object' && d.type && registry.get(d.type)){
+        store.insertBlock(insertAt(), { type: d.type, config: d.config || {} });
+        toast('已从剪贴板粘贴模块');
+        return true;
+      }
+    } catch(e){ /* 不是 JSON，交给浏览器默认行为 */ }
+  }
+  return false;
+}
+
+function doUndo(){ const ok = store.undo(); if (ok) toast('已撤销'); return ok; }
+function doRedo(){ const ok = store.redo(); if (ok) toast('已重做'); return ok; }
+
+function bindShortcuts(){
+  document.addEventListener('keydown', e => {
+    const mod = e.ctrlKey || e.metaKey;
+    if (!mod) return;
+    const k = (e.key || '').toLowerCase();
+    // 文本框 / 下拉框内：一律交给浏览器原生处理（光标、文本撤销、文本粘贴）
+    if (isTextField(document.activeElement)) return;
+
+    if (k === 'z' && !e.shiftKey){ if (doUndo()) e.preventDefault(); return; }
+    if ((k === 'z' && e.shiftKey) || k === 'y'){ if (doRedo()) e.preventDefault(); return; }
+    if (k === 'c'){ if (copySelected()) e.preventDefault(); return; }
+    if (k === 'x'){ if (cutSelected()) e.preventDefault(); return; }
+  });
+
+  // 粘贴走 paste 事件：keydown 上拿不到 clipboardData
+  document.addEventListener('paste', e => {
+    if (isTextField(document.activeElement)) return;
+    if (pasteFromEvent(e)) e.preventDefault();
+  });
+}
+
+function syncUndoButtons(){
+  const u = document.getElementById('btn-undo');
+  const r = document.getElementById('btn-redo');
+  if (u) u.disabled = !store.canUndo();
+  if (r) r.disabled = !store.canRedo();
+}
+
 /* ---------- 轻量更新（配置编辑时，不重建属性面板以保焦点） ---------- */
 function liveUpdate(){
   const b = store.getBlock(store.selectedId);
   if (b){
     const el = document.querySelector(`.struct-item[data-id="${b.id}"] .nm`);
     if (el) el.textContent = blockLabel(b);
+    // 记录撤销点：同一次连续输入会被合并成一步（见 store.commit 的 label 合并）
+    store.commit('config:' + b.id);
   }
   renderPreviewAndGuides();
+  syncUndoButtons();
 }
 
 /* ---------- 结构列表 ---------- */
@@ -165,11 +295,26 @@ function renderPalette(){
   });
 }
 
+/* ---------- 纸张控件回填（撤销/重做后需要同步 UI） ---------- */
+function syncPaperControls(){
+  const sizeSel = document.getElementById('paper-size');
+  const orientSel = document.getElementById('paper-orient');
+  const marksSel = document.getElementById('paper-marks');
+  const markSizeIn = document.getElementById('mark-size');
+  if (sizeSel) sizeSel.value = store.paper.size;
+  if (orientSel) orientSel.value = store.paper.orientation;
+  if (marksSel) marksSel.value = store.paper.marks || 'square';
+  if (markSizeIn) markSizeIn.value = store.paper.markSize || 4;
+}
+
 /* ---------- 全量渲染 ---------- */
 function fullRender(){
+  syncPaperControls();
+  applyPaper();
   renderStructure();
   renderProps();
   renderPreviewAndGuides();
+  syncUndoButtons();
 }
 
 /* ---------- 工具栏绑定 ---------- */
@@ -178,20 +323,24 @@ function bindToolbar(){
   const orientSel = document.getElementById('paper-orient');
   sizeSel.value = store.paper.size;
   orientSel.value = store.paper.orientation;
-  sizeSel.addEventListener('change', e => { store.paper.size = e.target.value; applyPaper(); renderPreviewAndGuides(); });
-  orientSel.addEventListener('change', e => { store.paper.orientation = e.target.value; applyPaper(); renderPreviewAndGuides(); });
+  sizeSel.addEventListener('change', e => { store.paper.size = e.target.value; store.commit('paper'); applyPaper(); renderPreviewAndGuides(); syncUndoButtons(); });
+  orientSel.addEventListener('change', e => { store.paper.orientation = e.target.value; store.commit('paper'); applyPaper(); renderPreviewAndGuides(); syncUndoButtons(); });
 
   // 定位点：样式 + 边长（每面只要有内容就自动加四角定位点）
   const marksSel = document.getElementById('paper-marks');
   const markSizeIn = document.getElementById('mark-size');
   marksSel.value = store.paper.marks || 'square';
   markSizeIn.value = store.paper.markSize || 4;
-  marksSel.addEventListener('change', e => { store.paper.marks = e.target.value; renderPreviewAndGuides(); });
+  marksSel.addEventListener('change', e => { store.paper.marks = e.target.value; store.commit('paper'); renderPreviewAndGuides(); syncUndoButtons(); });
   markSizeIn.addEventListener('input', e => {
     const v = parseFloat(e.target.value);
     if (!isNaN(v)) store.paper.markSize = Math.max(1, Math.min(12, v));
+    store.commit('paper:markSize');
     renderPreviewAndGuides();
   });
+
+  document.getElementById('btn-undo').addEventListener('click', doUndo);
+  document.getElementById('btn-redo').addEventListener('click', doRedo);
 
   document.getElementById('btn-print').addEventListener('click', () => window.print());
   document.getElementById('btn-save').addEventListener('click', () => {
@@ -224,9 +373,11 @@ function bindToolbar(){
 /* ---------- 初始化 ---------- */
 function init(){
   if (!store.load()) store.reset(defaultBlocks());
+  store.resetHistory();          // 初始状态作为撤销基线
   applyPaper();
   renderPalette();
   bindToolbar();
+  bindShortcuts();
   fullRender();
   store.subscribe(fullRender);
   window.addEventListener('resize', renderPreviewAndGuides);

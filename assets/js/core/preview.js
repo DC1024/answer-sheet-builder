@@ -63,13 +63,15 @@ export function renderPreview(el){
     const bh = blk.getBoundingClientRect().height;
     probe.remove();
 
-    // 选当前最矮的栏
+    // 严格按「面 → 栏」顺序填充：先把第一面第一栏填满，再第二栏；第一面满了才用第二面。
+    // （不再挑「最矮栏」做均衡 —— 均衡会让内容左右跳跃，读起来是乱序的）
     let target = 0;
-    for (let c = 1; c < cols; c++) if (colHeights[c] < colHeights[target]) target = c;
-
-    // 当前面放不下且本面已有内容 -> 新面
-    if (colHeights[target] + bh + marginPx > contentHpx && colHeights[target] > 0.5){
-      newPage();
+    while (target < cols && colHeights[target] > 0.5 &&
+           colHeights[target] + bh + marginPx > contentHpx){
+      target++;                                  // 本栏放不下 → 试下一栏
+    }
+    if (target >= cols){
+      newPage();                                 // 本面所有栏都放不下 → 新的一面
       target = 0;
     }
     cur._cols[target].appendChild(blk);

@@ -1,18 +1,21 @@
 // 模块：考生信息栏（班级/姓名/考号等手写栏 + 可选考号填涂区）
 import { esc, commonStyle, mmPx, probeSize } from '../core/util.js';
-import { blockInnerMM } from '../core/geometry.js';
+import { blockInnerMM, pageGeom } from '../core/geometry.js';
 
 // 考号填涂区的宽度策略：
-//   左侧填涂格要「可填涂、可读」，右侧手写栏可以「适量压榨」。
-//   ① 填涂格尺寸直接由「可用宽度 ÷ 位数」反推（3–5mm），而不是跟着字号被动缩小 ——
-//      这样位数再多也先把格子撑到能填的大小；
-//   ② 只有气泡会小于 3mm 时才逐档压缩右侧手写栏下划线（下限 60%）；
-//   ③ 填涂区只占「气泡真正需要的宽度」，剩余宽度留给右侧手写栏把下划线拉满，避免右侧留白。
+//   ① **宽度上限**：填涂区最多占「页面宽度」的 gridMaxPct%（默认 25%，即 1/4 页宽）——
+//      「占比」是纸面上的直觉，所以基数取整页宽度（pw），不是栏宽；A3 横版同样成立。
+//   ② 在上限内把格子撑到尽可能大（3–5mm），而不是跟着字号被动缩小；
+//      相邻间距按格宽自适应（宽格留大间距、紧格贴紧排）。
+//   ③ 若上限内连「可填涂下限 3mm」都放不下（位数多 / 纸小），才**放宽上限**——
+//      但永不越过栏宽；这一步之前会先逐档压缩右侧手写栏。
 const FIELDS_GAP_MM = 3.2;          // 填涂区与手写栏之间的间距，需与 CSS 的 .info-body gap 一致
 const BRK_MIN_MM = 3.0;             // 填涂格边长下限（再小就不便于填涂）
 const BRK_MAX_MM = 5.0;             // 填涂格边长上限（够大即可，避免格子巨大而显得空旷）
 const FIELDS_MIN_SCALE = 0.6;       // 手写栏下划线最多压到原设定的 60%
 const BASE_FONT_PX = 14;            // .blk 的基准字号，用于把「通用样式→字号」折算成尺寸缩放
+const GRID_MAX_PCT = 25;            // 填涂区宽度上限默认值：页面宽度的 25%
+const GRID_PCT_MIN = 10, GRID_PCT_MAX = 60;
 
 // 相邻填涂格之间的空隙按格宽自适应：格宽时留大间距（清晰），格紧时贴紧排（把尺寸让给方框本身）——
 // 真实机读卡也是这么做的，这样才能在位数很多时仍然保住「可填涂」的方框尺寸。
@@ -34,7 +37,8 @@ export default {
       { label: '考号', w: 120 }
     ],
     examGrid: false,
-    examDigits: 8
+    examDigits: 8,
+    gridMaxPct: GRID_MAX_PCT
   }),
 
   configUI(container, config, onChange){
@@ -47,10 +51,15 @@ export default {
       <label style="margin-top:12px;display:flex;align-items:center;gap:6px;">
         <input type="checkbox" data-k="examGrid" ${config.examGrid ? 'checked' : ''}> 启用考号填涂区
       </label>
-      <label>考号位数
-        <input type="number" min="4" max="20" data-k="examDigits" value="${config.examDigits}">
-      </label>
-      <p class="hint">启用后手写栏移到填涂区右侧：填涂区宽度按「格子可填涂所需的大小」自动确定，剩余宽度由手写栏下划线拉满（所填宽度作为最小值）。位数较多时会先从手写栏让出空间，仍不够才缩小格子，绝不超出纸张。</p>
+      <div class="row">
+        <label>考号位数
+          <input type="number" min="4" max="20" data-k="examDigits" value="${config.examDigits}">
+        </label>
+        <label>最大占比(% 页宽)
+          <input type="number" min="10" max="60" step="5" data-k="gridMaxPct" value="${config.gridMaxPct ?? GRID_MAX_PCT}">
+        </label>
+      </div>
+      <p class="hint">填涂区宽度默认不超过<b>页面宽度的 1/4</b>（可调 10–60%），剩余宽度由右侧手写栏下划线拉满。上限内会把方框撑到尽量大（3–5mm），保证可填涂、可读；只有上限内连 3mm 都放不下时（位数很多或纸张较小）才自动放宽，且永不超出纸张。</p>
     `;
     const list = container.querySelector('#field-list');
     const renderList = () => {
@@ -80,6 +89,11 @@ export default {
     container.querySelector('[data-k="title"]').addEventListener('input', e => { config.title = e.target.value; onChange(); });
     container.querySelector('[data-k="examGrid"]').addEventListener('change', e => { config.examGrid = e.target.checked; onChange(); });
     container.querySelector('[data-k="examDigits"]').addEventListener('input', e => { config.examDigits = parseInt(e.target.value) || 8; onChange(); });
+    container.querySelector('[data-k="gridMaxPct"]').addEventListener('input', e => {
+      const v = parseInt(e.target.value);
+      config.gridMaxPct = isNaN(v) ? GRID_MAX_PCT : Math.max(GRID_PCT_MIN, Math.min(GRID_PCT_MAX, v));
+      onChange();
+    });
   },
 
   render(config){
@@ -146,11 +160,14 @@ export default {
     return widest / px;
   },
 
-  // 布局：由可用宽度反推填涂格边长；必要时压缩右侧手写栏
+  // 布局：先按「页面 1/4 宽度」上限反推填涂格边长，放不下下限时再逐级放宽
   _layout(config){
     const n = this._digits(config);
     const innerMM = blockInnerMM();
     const px = mmPx();
+    const pct = Math.max(GRID_PCT_MIN, Math.min(GRID_PCT_MAX, +(config.gridMaxPct ?? GRID_MAX_PCT) || GRID_MAX_PCT));
+    // 「占比」的基数取整页宽度（纸面直觉），不是栏宽
+    const capMM = pageGeom().pw * pct / 100;
     // 填涂区自身占用的宽度：左右 padding(0.5em) + 边框(1.5px)
     const gridChromeMM = (2 * 0.5 * BASE_FONT_PX + 2 * 1.5) / px;
     // 「通用样式 → 字号」按比例放大填涂格（默认 14px 时不缩放）
@@ -158,26 +175,42 @@ export default {
     const brkMax = BRK_MAX_MM * fontScale;
     const brkMin = BRK_MIN_MM * fontScale;
 
-    // 给定手写栏压缩比时，能分给每个格子的边长与自适应间距
-    const fitOf = scale => {
-      const avail = innerMM - this._fieldsMM(config, scale) - FIELDS_GAP_MM;
+    // 给定可用宽度 → 该宽度下能放下的格子边长（受上限约束）
+    const brkIn = avail => {
       const cell = (avail - gridChromeMM) / n;
       const gap = cellGapMM(cell);
-      return { avail, cell, gap, brk: Math.min(brkMax, cell - gap) };
+      return { cell, gap, brk: Math.min(brkMax, cell - gap) };
     };
+    // 理想宽度：在「上限」内把格子撑到上限尺寸
+    const idealMM = Math.min(capMM, n * (brkMax + cellGapMM(brkMax)) + gridChromeMM);
 
-    // 优先保持手写栏设定宽度；只有填涂格会小于下限时才逐档压榨
+    // 手写栏压缩比：只有「填涂区（按上限取宽）+ 手写栏」超出一栏时才逐档压缩
     let fieldScale = 1;
-    while (fieldScale > FIELDS_MIN_SCALE && fitOf(fieldScale).brk < brkMin){
+    while (fieldScale > FIELDS_MIN_SCALE &&
+           idealMM + FIELDS_GAP_MM + this._fieldsMM(config, fieldScale) > innerMM + 0.01){
       fieldScale = +(fieldScale - 0.1).toFixed(2);
     }
-    if (fieldScale < FIELDS_MIN_SCALE) fieldScale = FIELDS_MIN_SCALE;
 
-    const fit = fitOf(fieldScale);
-    const brk = Math.max(brkMin, Math.min(brkMax, fit.brk));
-    // 填涂区只占「气泡所需宽度」，余量留给右侧手写栏拉满下划线
-    const gridMM = Math.max(30, Math.min(fit.avail, n * (brk + fit.gap) + gridChromeMM));
-    return { brk, gap: fit.gap, fieldScale, gridMM };
+    // 栏宽给填涂区的绝对上限（硬约束：绝不溢出）
+    const hardMax = Math.max(0, innerMM - FIELDS_GAP_MM - this._fieldsMM(config, fieldScale));
+
+    // ① 先在上限内排：avail = min(页面占比上限, 栏宽上限)
+    let avail = Math.min(capMM, hardMax);
+    let f = brkIn(avail);
+    // ② 上限内连「可填涂下限」都放不下 → 放宽上限到「刚好放得下下限」（仍不越过栏宽）
+    if (f.brk < brkMin){
+      const needMM = n * (brkMin + cellGapMM(brkMin + 0.7)) + gridChromeMM;
+      avail = Math.min(hardMax, Math.max(avail, needMM));
+      f = brkIn(avail);
+    }
+
+    const brk = Math.max(0.8, Math.min(brkMax, f.brk));
+    const gridMM = Math.max(12, n * (brk + f.gap) + gridChromeMM);
+    return {
+      brk, gap: f.gap, fieldScale, gridMM,
+      // 供校验 / 调试：上限是否被突破（只可能是「保住可填涂」这一步）
+      capMM, pct, exceededCap: gridMM > capMM + 0.05
+    };
   },
 
   _gridHtml(config, lay){

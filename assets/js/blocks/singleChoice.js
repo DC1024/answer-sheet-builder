@@ -42,7 +42,7 @@ export default {
   type: 'singleChoice',
   name: '选择题',
   icon: '☑',
-  defaults: () => ({ title: '一、选择题', count: 10, cols: 5, options: 4, mode: 'bubble', startNo: 1 }),
+  defaults: () => ({ title: '一、选择题', count: 10, cols: 5, options: 4, mode: 'bubble', hwGap: 1, startNo: 1 }),
 
   configUI(container, config, onChange){
     normalize(config);
@@ -66,13 +66,18 @@ export default {
           <input type="number" min="1" max="200" data-k="startNo" value="${config.startNo}">
         </label>
       </div>
-      <label>作答样式
-        <select data-k="mode">
-          <option value="bubble">填涂（中括号）</option>
-          <option value="handwrite">手写（横线）</option>
-        </select>
-      </label>
-      <p class="hint">「每行题数」为上限：空间不足时会自动减少列数，保证每道题的题号与全部选项都排在同一行内。选项超过 26 个用 AA、AB… 续排；选项多到一行放不下时该题独占一栏，按行排满后换行，不会超出纸张。</p>
+      <div class="row">
+        <label>作答样式
+          <select data-k="mode">
+            <option value="bubble">填涂（中括号）</option>
+            <option value="handwrite">手写（横线）</option>
+          </select>
+        </label>
+        <label>行间距(mm)
+          <input type="number" min="0.5" max="30" step="0.5" data-k="hwGap" value="${config.hwGap ?? 1}">
+        </label>
+      </div>
+      <p class="hint">「行间距」控制每题之间的垂直距离（手写样式下尤其需要留出书写空间）。「每行题数」为上限：空间不足时会自动减少列数，保证每道题的题号与全部选项都排在同一行内。选项超过 26 个用 AA、AB… 续排；选项多到一行放不下时该题独占一栏，按行排满后换行，不会超出纸张。</p>
     `;
     container.querySelector('[data-k="mode"]').value = config.mode;
     container.querySelectorAll('[data-k]').forEach(el => {
@@ -96,13 +101,15 @@ export default {
     const start = Math.max(1, +config.startNo || 1);
     const count = Math.max(1, +config.count || 1);
     const style = commonStyle(config);
+    // 行间距：手写（横线）样式尤其需要留出书写空间；由 .sc-grid 的 row-gap 读取
+    const hwGap = Math.max(0.5, Math.min(30, parseFloat(config.hwGap) || 1));
 
     const cols = this._fitCols(config, letters, style);
 
     let rows = '';
     for (let i = 0; i < count; i++) rows += qHtml(start + i, letters, config.mode);
 
-    return `<div class="blk" style="${style}"><div class="blk-title">${esc(config.title)}</div>
+    return `<div class="blk" style="${style};--hg:${hwGap}mm"><div class="blk-title">${esc(config.title)}</div>
       <div class="sc-grid" style="grid-template-columns:repeat(${cols},minmax(0,1fr))">${rows}</div></div>`;
   },
 
