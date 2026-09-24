@@ -22,10 +22,10 @@ button{background:var(--pri);color:#fff;border:0;border-radius:6px;padding:7px 1
 button.ghost{background:#fff;color:var(--pri);border:1px solid #cfe0f3;}
 button:disabled{opacity:.5;cursor:not-allowed;}
 input[type=file]{font-size:13px;}
-label.f{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#4a5568;}
-input[type=number],input[type=text],textarea{border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-size:13px;font-family:inherit;}
+input[type=text],input[type=number],textarea{border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-size:13px;font-family:inherit;}
 input[type=number]{width:74px;}
 textarea{width:100%;min-height:64px;}
+label.f{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#4a5568;}
 .hint{font-size:12px;color:var(--mut);}
 table{border-collapse:collapse;width:100%;font-size:13px;}
 th,td{border:1px solid var(--line);padding:5px 8px;text-align:left;}
@@ -45,13 +45,46 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 .badge.ok{color:var(--ok);border-color:#b7e4c7;background:#ebfbee;}
 .badge.warn{color:var(--warn);border-color:#f3d9a4;background:#fff9db;}
 .badge.err{color:var(--err);border-color:#f5c2c2;background:#fff5f5;}
+.badge.info{color:var(--pri);border-color:#cfe0f3;background:#f2f8ff;}
 .grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;}
 @media(max-width:860px){.grid2{grid-template-columns:1fr;}}
 .bar{height:8px;background:#eef2f7;border-radius:4px;overflow:hidden;min-width:60px;}
 .bar i{display:block;height:100%;background:var(--pri);}
 .empty{color:var(--mut);font-size:13px;padding:8px 0;}
-#toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,10px);background:#2b3440;color:#fff;padding:8px 16px;border-radius:20px;font-size:13px;opacity:0;pointer-events:none;transition:.18s;}
+#toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,10px);background:#2b3440;color:#fff;padding:8px 16px;border-radius:20px;font-size:13px;opacity:0;pointer-events:none;transition:.18s;z-index:80;}
 #toast.on{opacity:1;transform:translate(-50%,0);}
+/* ---- 批量上传 ---- */
+#drop{border:2px dashed #c9d6e4;border-radius:10px;padding:18px;text-align:center;background:#fbfdff;transition:.15s;}
+#drop.hot{border-color:var(--pri);background:#eef6ff;}
+#drop .big{font-size:14px;color:#3d4c5c;margin-bottom:4px;}
+.btnlike{display:inline-block;background:var(--pri);color:#fff;border-radius:6px;padding:7px 14px;font-size:13px;cursor:pointer;}
+.btnlike.ghost{background:#fff;color:var(--pri);border:1px solid #cfe0f3;}
+.btnlike input{display:none;}
+#fileList{max-height:150px;overflow:auto;font-size:12px;color:var(--mut);text-align:left;margin-top:8px;}
+#fileList div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.stu{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:#fff;}
+.stu .hd{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;}
+.stu .who{font-weight:700;}
+.stu .who small{font-weight:400;color:var(--mut);margin-left:8px;}
+.stu .issues{margin:6px 0 0;padding-left:18px;color:#b06a00;font-size:12px;}
+.stu .issues li{margin:2px 0;}
+.chips{display:flex;gap:4px;flex-wrap:wrap;margin-top:8px;}
+.chip{border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:12px;background:#f9fbfd;font-variant-numeric:tabular-nums;}
+.chip.bad{border-color:#f3d9a4;background:#fff9db;}
+.chip.none{border-color:#f5c2c2;background:#fff5f5;color:var(--err);}
+.stu details{margin-top:8px;}
+.stu details summary{cursor:pointer;font-size:12px;color:var(--pri);}
+.thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}
+.thumbs .ov{width:132px;border:1px solid var(--line);border-radius:6px;overflow:hidden;}
+.queue{background:#fffdf5;border:1px solid #f3d9a4;border-radius:8px;padding:10px 12px;margin-bottom:14px;}
+.queue h3{font-size:13px;margin:0 0 8px;color:#a06a00;}
+.qitem{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:5px 0;border-top:1px dashed #f0e2c4;font-size:13px;}
+.qitem:first-of-type{border-top:0;}
+.qitem input{width:110px;}
+.warns{background:#fff5f5;border:1px solid #f5c2c2;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12.5px;color:#8c2f2f;}
+.warns div{margin:2px 0;}
+.bar2{height:6px;background:#eef2f7;border-radius:3px;overflow:hidden;margin:10px 0 4px;}
+.bar2 i{display:block;height:100%;background:var(--pri);transition:.2s;width:0;}
 </style>
 </head>
 <body>
@@ -71,33 +104,61 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
   </div>
 
   <div class="card">
-    <h2>② 扫描图 <span class="tag">扫描仪 300dpi 或手机拍照均可，多张一次上传</span></h2>
-    <div class="row">
-      <input type="file" id="imgFiles" accept="image/*" multiple>
-      <button id="btnScan">开始识别</button>
+    <h2>② 批量上传 <span class="tag">一次丢一个班：zip 压缩包 / 整个文件夹 / 一堆散图</span></h2>
+
+    <div id="drop">
+      <div class="big">把扫描件拖到这里，或把整个文件夹拖进来</div>
+      <div class="hint" style="margin-bottom:10px">文件名或目录名里带考号就会被认出来 —— <code>2026010234/正面.png</code>、<code>2026010234_1.png</code>、<code>2026010234.png</code></div>
+      <div class="row" style="justify-content:center">
+        <label class="btnlike">选择 zip / 图片<input type="file" id="bFiles" multiple accept=".zip,image/*,.csv,.tsv,.txt"></label>
+        <label class="btnlike ghost">选择整个文件夹<input type="file" id="bFolder" webkitdirectory directory multiple></label>
+        <button id="btnClear" class="ghost">清空选择</button>
+      </div>
+      <div class="hint" id="bSel">未选择文件</div>
+      <div id="fileList"></div>
     </div>
+
+    <div class="row" style="margin-top:12px">
+      <label class="f">学生名单（可选）<input type="file" id="bRoster" accept=".csv,.tsv,.txt"></label>
+      <span class="hint">表头认「考号 / 姓名 / 班级」，Excel 导出的 GBK 编码也能读；名单也可以夹在压缩包里</span>
+    </div>
+
     <div class="row">
-      <label class="f">面序号 <input type="number" id="pageIdx" value="0" min="0" max="9"></label>
+      <button id="btnBatch">开始批量识别</button>
+      <span class="hint" id="batchInfo"></span>
+    </div>
+
+    <div class="row" style="border-top:1px solid var(--line);padding-top:10px">
+      <span class="hint" style="min-width:60px">识别参数</span>
       <label class="f">采样精度(px/mm) <input type="number" id="pxPerMm" value="8" min="3" max="20" step="1"></label>
       <label class="f">填涂阈值 <input type="number" id="fillMin" value="0.5" min="0.2" max="0.9" step="0.05"></label>
       <label class="f">区分间距 <input type="number" id="gap" value="0.15" min="0.02" max="0.5" step="0.01"></label>
-      <span class="hint">阈值越低越容易判为已涂；浅涂/多选会自动打「存疑」标记</span>
+      <span class="hint">阈值越低越容易判为已涂；浅涂/多选会自动打「存疑」标记（单张扫描与批量共用这里）</span>
     </div>
+
+    <div class="bar2" id="bProg" style="display:none"><i></i></div>
+    <div id="batchBox"></div>
   </div>
 
   <div class="card">
-    <h2>③ 识别结果</h2>
+    <h2>③ 单张扫描 <span class="tag">调参数、排查用</span></h2>
+    <div class="row">
+      <input type="file" id="imgFiles" accept="image/*" multiple>
+      <button id="btnScan" class="ghost">开始识别</button>
+      <label class="f">面序号 <input type="number" id="pageIdx" value="0" min="0" max="9"></label>
+    </div>
     <div id="results"><div class="empty">还没有识别结果</div></div>
   </div>
 
   <div class="card">
-    <h2>④ 汇总统计 <span class="tag">填标准答案可得正确率与得分</span></h2>
+    <h2>④ 汇总统计 <span class="tag">默认针对最近一次识别；填标准答案可得正确率与得分</span></h2>
     <div class="row">
       <textarea id="key" placeholder="标准答案，例如：1A 2C 3B 4D …（也可只填字母序列 A C B D，按题号顺序）"></textarea>
     </div>
     <div class="row">
       <button id="btnStats" class="ghost">生成统计</button>
-      <button id="btnCsv" class="ghost">导出 CSV</button>
+      <button id="btnCsv" class="ghost">导出成绩 CSV</button>
+      <button id="btnRosterCsv" class="ghost">导出名单对账 CSV</button>
       <span class="hint" id="statsInfo"></span>
     </div>
     <div class="grid2">
@@ -111,8 +172,9 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 <div id="toast"></div>
 <script>
 const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
 let toastT = null;
-function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('on'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('on'),1800); }
+function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('on'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('on'),2200); }
 const flagText = {ok:'已选', multi:'多选/难分', faint:'浅涂', blank:'未填'};
 const flagCls = {ok:'ok', multi:'warn', faint:'warn', blank:'err'};
 
@@ -125,6 +187,15 @@ document.addEventListener('click', e => {
   if (ov) openLb(ov.dataset.src);
 });
 
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmtSize(n){
+  if (n < 1024) return n + ' B';
+  if (n < 1024*1024) return (n/1024).toFixed(0) + ' KB';
+  return (n/1024/1024).toFixed(1) + ' MB';
+}
+const params = () => ({pxPerMm: $('#pxPerMm').value, fillMin: $('#fillMin').value, gap: $('#gap').value});
+
+// ============================================================ ① 模板
 $('#btnTpl').onclick = async () => {
   const f = $('#tplFile').files[0];
   if (!f) return toast('先选择模板文件');
@@ -133,20 +204,240 @@ $('#btnTpl').onclick = async () => {
   if (r.error) { toast(r.error); return; }
   const s = r.summary, p = s.paper;
   $('#tplInfo').textContent = `${p.size} ${p.orientation} · ${p.w}×${p.h}mm · ${s.pages.length} 面 · 共 ${s.questionCount} 题 · 定位点 ${s.marks.style} ${s.marks.size}mm`;
-  toast('模板已载入：' + s.questionCount + ' 题');
+  toast('模板已载入：' + s.questionCount + ' 题 / ' + s.pages.length + ' 面');
 };
 
+// ============================================================ ② 批量上传
+let sel = [];                      // [{path, file}]
+let ovr = {};                      // {考号: {name, cls}} 人工补录
+
+function refreshSel(){
+  const n = sel.length, size = sel.reduce((a,b) => a + b.file.size, 0);
+  $('#bSel').textContent = n ? `已选 ${n} 个文件（${fmtSize(size)}）` : '未选择文件';
+  $('#btnBatch').disabled = !n;
+  const box = $('#fileList');
+  box.innerHTML = sel.slice(0, 60).map(x =>
+    `<div>${esc(x.path)} <span style="opacity:.6">${fmtSize(x.file.size)}</span></div>`).join('')
+    + (n > 60 ? `<div>… 另有 ${n - 60} 个</div>` : '');
+}
+
+function addFiles(list){
+  const seen = new Set(sel.map(x => x.path + '|' + x.file.size));
+  let skipped = 0;
+  for (const it of list){
+    const key = it.path + '|' + it.file.size;
+    if (seen.has(key)) { skipped++; continue; }
+    seen.add(key);
+    sel.push(it);
+  }
+  refreshSel();
+  if (skipped) toast(`已忽略 ${skipped} 个重复文件`);
+}
+
+// 拖进来的可能是文件夹 —— 只有 webkitGetAsEntry 能往下递归。
+// dataTransfer.items 只在事件回调内有效，所以必须先把 entry 抓出来再异步处理。
+function walk(entry, prefix, out){
+  return new Promise(resolve => {
+    if (entry.isFile){
+      entry.file(f => { out.push({path: prefix + entry.name, file: f}); resolve(); }, () => resolve());
+      return;
+    }
+    const rd = entry.createReader();
+    const readAll = () => rd.readEntries(async ents => {
+      if (!ents.length) return resolve();
+      for (const e of ents) await walk(e, prefix + entry.name + '/', out);
+      readAll();
+    }, () => resolve());
+    readAll();
+  });
+}
+
+async function fromDataTransfer(dt){
+  const out = [], roots = [];
+  for (const it of Array.from(dt.items || [])){
+    if (it.kind !== 'file') continue;
+    const e = it.webkitGetAsEntry && it.webkitGetAsEntry();
+    if (e) roots.push(e);
+    else { const f = it.getAsFile && it.getAsFile(); if (f) out.push({path: f.name, file: f}); }
+  }
+  if (roots.length){
+    for (const e of roots) await walk(e, '', out);
+    return out;
+  }
+  return Array.from(dt.files || []).map(f => ({path: f.webkitRelativePath || f.name, file: f}));
+}
+
+const drop = $('#drop');
+['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); e.stopPropagation(); drop.classList.add('hot');
+}));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); e.stopPropagation(); if (ev === 'dragleave') drop.classList.remove('hot');
+}));
+drop.addEventListener('drop', async e => {
+  drop.classList.remove('hot');
+  const t0 = Date.now();
+  const list = await fromDataTransfer(e.dataTransfer);
+  if (!list.length) return toast('没读到文件');
+  addFiles(list);
+  toast(`读入 ${list.length} 个文件（${((Date.now()-t0)/1000).toFixed(1)}s）`);
+});
+
+$('#bFiles').onchange = e => { addFiles(Array.from(e.target.files).map(f => ({path: f.name, file: f}))); e.target.value = ''; };
+$('#bFolder').onchange = e => { addFiles(Array.from(e.target.files).map(f => ({path: f.webkitRelativePath || f.name, file: f}))); e.target.value = ''; };
+$('#btnClear').onclick = () => { sel = []; refreshSel(); $('#batchBox').innerHTML = ''; $('#batchInfo').textContent = ''; };
+
+$('#btnBatch').onclick = async () => {
+  if (!sel.length) return toast('先选择扫描件或文件夹');
+  const btn = $('#btnBatch');
+  btn.disabled = true;
+  $('#bProg').style.display = 'block';
+  $('#bProg').querySelector('i').style.width = '8%';
+  $('#batchInfo').textContent = `上传并识别中…（${sel.length} 个文件，一个班通常十几秒到一分钟）`;
+  const t0 = Date.now();
+
+  const fd = new FormData();
+  for (const it of sel){ fd.append('files', it.file, it.file.name); fd.append('paths', it.path); }
+  const rf = $('#bRoster').files[0];
+  if (rf) fd.append('roster', rf);
+  const p = params();
+  fd.append('pxPerMm', p.pxPerMm); fd.append('fillMin', p.fillMin); fd.append('gap', p.gap);
+  fd.append('overrides', JSON.stringify(ovr));
+
+  let r;
+  try {
+    r = await (await fetch('/api/batch', {method:'POST', body:fd})).json();
+  } catch (err){
+    r = {error: '请求失败：' + err};
+  }
+  $('#bProg').style.display = 'none';
+  btn.disabled = false;
+
+  if (r.error){
+    $('#batchInfo').textContent = '';
+    $('#batchBox').innerHTML = `<div class="warns"><div>${esc(r.error)}</div></div>`;
+    return toast(r.error);
+  }
+  const dt = ((Date.now()-t0)/1000).toFixed(1);
+  const s = r.stats || {};
+  $('#batchInfo').textContent = `${(r.students||[]).length} 位考生 · ${s.images||0} 张图`
+    + (s.zips ? `（含 ${s.zips} 个压缩包）` : '')
+    + ` · 用时 ${dt}s`
+    + ((r.roster||{}).count ? ` · 名单 ${r.roster.count} 人` : ' · 未提供名单');
+  renderBatch(r);
+  toast(`识别完成：${(r.students||[]).length} 位考生，用时 ${dt}s`);
+};
+
+function renderBatch(r){
+  const stus = r.students || [];
+  const box = $('#batchBox');
+  if (!stus.length){ box.innerHTML = '<div class="empty">没有识别到考生</div>'; return; }
+
+  const need = stus.filter(s => (s.issues||[]).length);
+  let html = '';
+
+  if ((r.warnings||[]).length){
+    html += '<div class="warns">' + r.warnings.map(w => `<div>⚠️ ${esc(w)}</div>`).join('') + '</div>';
+  }
+
+  if (need.length){
+    html += `<div class="queue"><h3>需要人工确认（${need.length} 位）</h3>
+      <div class="hint" style="margin-bottom:6px">填上姓名/班级后点「重新套用」—— 只改标注，识别出来的答案不会被改动。</div>`;
+    for (const s of need){
+      html += `<div class="qitem">
+        <b>${esc(s.sid)}</b>
+        <span class="hint">${esc((s.issues||[]).join('；'))}</span>
+        <input type="text" placeholder="姓名" data-ovr="${esc(s.sid)}" data-k="name" value="${esc(s.name||'')}">
+        <input type="text" placeholder="班级" data-ovr="${esc(s.sid)}" data-k="cls" value="${esc(s.cls||'')}">
+      </div>`;
+    }
+    html += `<div class="row"><button id="btnRematch">重新套用</button>
+      <span class="hint">补录只影响展示与导出，不会重新识别</span></div></div>`;
+  }
+
+  stus.forEach((s, i) => {
+    const bad = (s.issues||[]).length;
+    const pages = s.pages || [];
+    const fail = pages.filter(p => !p.ok).length;
+    const ans = s.answers || {};
+    const nos = Object.keys(ans).sort((a,b) => (+a) - (+b));
+    const conf = s.conflicts || [];
+    const label = s.matched === true
+      ? (s.manual ? '<span class="badge info">人工补录</span>' : '<span class="badge ok">名单匹配</span>')
+      : (s.matched === false ? '<span class="badge warn">不在名单</span>' : '<span class="badge">未提供名单</span>');
+    const chips = nos.map(k => {
+      const a = ans[k] || {};
+      const cls = a.flag === 'blank' ? 'none' : (a.flag && a.flag !== 'ok' ? 'bad' : '');
+      const t = a.answer ? `${k}${a.answer}` : `${k}—`;
+      return `<span class="chip ${cls}" title="${flagText[a.flag]||''}">${esc(t)}</span>`;
+    }).join('');
+
+    const thumbs = pages.map(p => p.overlay
+      ? `<div class="ov" data-src="/api/overlay/${p.id}.png" title="第 ${p.page+1} 面 · 点击放大"><img src="/api/overlay/${p.id}.png" alt="第 ${p.page+1} 面"></div>`
+      : `<div class="hint" style="width:132px">第 ${p.page+1} 面<br>${esc(p.error||'无校对图')}</div>`).join('');
+
+    const detail = pages.filter(p => p.ok).map(p => {
+      const head = (p.questions||[]).length
+        ? Object.keys((p.questions.find(q => q.ratios) || {}).ratios || {}).sort()
+            .map(k => `<th class="num">${esc(k)}</th>`).join('') : '';
+      const rows = (p.questions||[]).map(q => {
+        const cells = q.ratios ? Object.keys(q.ratios).sort().map(k =>
+          `<td class="num">${(q.ratios[k]*100).toFixed(0)}%</td>`).join('') : '';
+        return `<tr><td>${q.no}</td><td><b>${esc(q.answer||'—')}</b></td>
+          <td><span class="badge ${flagCls[q.flag]||''}">${flagText[q.flag]||esc(q.flag)}</span></td>${cells}</tr>`;
+      }).join('');
+      return `<h4 style="font-size:12px;margin:10px 0 4px;color:var(--mut)">第 ${p.page+1} 面</h4>
+        <div style="max-height:260px;overflow:auto"><table><thead><tr><th>题号</th><th>答案</th><th>判定</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
+    }).join('');
+
+    html += `<div class="stu">
+      <div class="hd">
+        <div class="who">${esc(s.sid)} ${s.name ? esc(s.name) : '<span class="hint">（无姓名）</span>'}
+          <small>${esc(s.cls||'')}</small></div>
+        <div>
+          ${label}
+          <span class="badge ${bad||fail?'warn':'ok'}">${pages.length} 面${fail?` · ${fail} 面失败`:''}${bad?` · ${bad} 项待确认`:''}</span>
+        </div>
+      </div>
+      ${bad ? `<ul class="issues">${(s.issues||[]).map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+      ${conf.length ? `<div class="hint" style="color:#b06a00">多页答案冲突：${conf.map(c=>'第'+c+'题').join('、')}</div>` : ''}
+      <div class="chips">${chips || '<span class="hint">没有识别到答案</span>'}</div>
+      <div class="thumbs">${thumbs}</div>
+      <details><summary>展开逐题明细（含每个填涂圈的墨迹占比）</summary>${detail || '<div class="hint">没有可展开的明细</div>'}</details>
+    </div>`;
+  });
+
+  box.innerHTML = html;
+
+  const rb = $('#btnRematch');
+  if (rb) rb.onclick = async () => {
+    $$('#batchBox input[data-ovr]').forEach(inp => {
+      const sid = inp.dataset.ovr;
+      ovr[sid] = ovr[sid] || {};
+      ovr[sid][inp.dataset.k] = inp.value.trim();
+    });
+    const r2 = await (await fetch('/api/batch/rematch', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({overrides: ovr})
+    })).json();
+    if (r2.error) return toast(r2.error);
+    renderBatch({students: r2.students, warnings: r2.warnings, roster: r2.roster,
+                 stats: {students: (r2.students||[]).length}});
+    toast('已重新套用');
+  };
+}
+
+// ============================================================ ③ 单张扫描
 $('#btnScan').onclick = async () => {
   const files = $('#imgFiles').files;
   if (!files.length) return toast('先选择扫描图');
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
+  const p = params();
   fd.append('page', $('#pageIdx').value);
-  fd.append('pxPerMm', $('#pxPerMm').value);
-  fd.append('fillMin', $('#fillMin').value);
-  fd.append('gap', $('#gap').value);
+  fd.append('pxPerMm', p.pxPerMm); fd.append('fillMin', p.fillMin); fd.append('gap', p.gap);
   $('#results').innerHTML = '<div class="empty">识别中…</div>';
   const r = await (await fetch('/api/scan', {method:'POST', body:fd})).json();
+  if (r.error){ $('#results').innerHTML = `<div class="warns"><div>${esc(r.error)}</div></div>`; return; }
   renderResults(r.results || []);
 };
 
@@ -190,6 +481,7 @@ function renderResults(list){
   }
 }
 
+// ============================================================ ④ 统计 / 导出
 $('#btnStats').onclick = async () => {
   const r = await (await fetch('/api/stats', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({key: $('#key').value})})).json();
@@ -197,24 +489,26 @@ $('#btnStats').onclick = async () => {
   $('#statsInfo').textContent = `${r.sheetCount} 份 · ${r.questions.length} 题` + (r.hasKey ? ' · 已按标准答案判分' : ' · 未填标准答案（仅统计分布）');
   $('#qstats').innerHTML = `<table><thead><tr><th>题号</th><th>答案</th>${r.hasKey?'<th class="num">正确率</th><th class="num">正确</th>':''}<th>分布</th><th class="num">未填</th><th class="num">存疑</th></tr></thead><tbody>
     ${r.questions.map(q => {
-      const total = Math.max(1, q.answered + q.blank);
       const dist = Object.keys(q.dist).map(k => `${k}:${q.dist[k]}`).join(' ') || '—';
       const bar = r.hasKey ? `<div class="bar" title="${q.rate}%"><i style="width:${q.rate||0}%"></i></div>` : '';
-      return `<tr><td>${q.no}</td><td>${q.key||'—'}</td>${r.hasKey?`<td class="num">${q.rate}%</td><td class="num">${q.correct}</td>`:''}<td>${dist}</td><td class="num">${q.blank}</td><td class="num">${q.doubt}</td></tr>`;
+      return `<tr><td>${q.no}</td><td>${q.key||'—'}</td>${r.hasKey?`<td class="num">${q.rate}%${bar}</td><td class="num">${q.correct}</td>`:''}<td>${dist}</td><td class="num">${q.blank}</td><td class="num">${q.doubt}</td></tr>`;
     }).join('')}</tbody></table>`;
-  $('#sstats').innerHTML = `<table><thead><tr><th>文件</th><th class="num">得分</th><th class="num">未填</th><th class="num">存疑</th><th>错题</th></tr></thead><tbody>
+  $('#sstats').innerHTML = `<table><thead><tr><th>考生</th><th class="num">得分</th><th class="num">未填</th><th class="num">存疑</th><th>错题</th></tr></thead><tbody>
     ${r.sheets.map(s => `<tr><td>${esc(s.name)}</td><td class="num">${s.score}${r.hasKey?`/${s.total}`:''}</td><td class="num">${s.blank}</td><td class="num">${s.doubt}</td>
       <td>${s.wrong.map(w=>`${w.no}(${w.chose}→${w.key})`).join(' ') || '—'}</td></tr>`).join('')}</tbody></table>`;
 };
 
-$('#btnCsv').onclick = () => {
-  const fd = new FormData(); fd.append('key', $('#key').value);
-  fetch('/api/export.csv', {method:'POST', body:fd}).then(r => r.blob()).then(b => {
-    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'omr-answers.csv'; a.click();
+function download(url, fields, filename){
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(fields)) fd.append(k, v);
+  fetch(url, {method:'POST', body:fd}).then(r => r.blob()).then(b => {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = filename; a.click();
   });
-};
+}
+$('#btnCsv').onclick = () => download('/api/export.csv', {key: $('#key').value}, 'omr-answers.csv');
+$('#btnRosterCsv').onclick = () => { const a = document.createElement('a'); a.href = '/api/roster.csv'; a.click(); };
 
-function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+refreshSel();
 </script>
 </body>
 </html>

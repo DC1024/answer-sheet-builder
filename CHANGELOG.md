@@ -5,6 +5,22 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added / 新增
+- **扫描服务：批量上传（一个班一次传完）**。可以丢 **zip 压缩包**、**整个文件夹**（浏览器递归读取，保留目录结构）或一堆散图；按考号自动归组、多页自动合并成一份卷子，跨目录同考号会标为「疑似重复」。
+  **Scanner: batch upload** — drop a **zip**, a **whole folder** (recursively read in the browser, directory structure preserved) or a pile of loose images; sheets are grouped by candidate number and multi-page sets merged into one paper, with cross-directory duplicates flagged.
+- **扫描服务：学生名单匹配**。上传 `考号,姓名,班级` 的 CSV/TSV（Excel 导出的 GBK 也能读，表头别名宽松匹配），自动贴上姓名班级，并列出**待人工确认队列**：考号不在名单里、名单里有人没交卷、页序异常等；补录后点「重新套用」即可，**只改标注、不重新识别**。名单也可以直接放进 zip 里，服务自己找。
+  **Scanner: roster matching** — upload a `id,name,class` CSV/TSV (GBK from Excel works, header aliases tolerated) to attach names and classes, with a **manual-confirmation queue** for unknown IDs, missing submissions and page-order anomalies. Fill-ins are re-applied without re-running recognition. The roster can also live inside the zip.
+- **扫描服务：文件夹上传的 `paths` 约定**：浏览器选文件夹时每个文件带 `webkitRelativePath`，服务端据此还原目录结构 —— 同名文件靠目录区分，不会互相覆盖。
+  **Scanner: `paths` contract for folder uploads** so identically-named files in different student folders stay distinct.
+- **扫描服务：统计与导出默认只针对最近一次识别那一批**（原来会把历史结果全混在一起）。成绩 CSV 在有考号时自动补上**考号/姓名/班级**三列并考号排序；新增**名单对账 CSV**（考号/姓名/班级/页数/备注）用来核对谁没交。
+  **Scanner: statistics and export now target only the most recent batch.** The score CSV gains **ID / name / class** columns (sorted by ID) when available, plus a new **roster reconciliation CSV**.
+- **扫描服务：页序越界一定报错**。原先页序号越界会被静默夹到最后一页 —— 「多传了一页」会拿错的模板面采样，答案看着正常但是错的。现在该面明确报「超出模板范围」并进待确认队列，其余面的答案照常保留（一面出错不作废整份）。
+  **Scanner: out-of-range page indices now error out** instead of being silently clamped to the last page — a sheet with an extra page would otherwise be sampled against the wrong template face and produce plausible-looking wrong answers.
+- 扫描服务的接口可以独立使用了：`POST /api/roster`（单独导名单）、`POST /api/batch/rematch`（补录后重新套名单）、`GET /api/students`、`GET /api/roster.csv`。
+  New scanner endpoints: `POST /api/roster`, `POST /api/batch/rematch`, `GET /api/students`, `GET /api/roster.csv`.
+- 新增两份离线测试：`scanner/tests/test_batch.py`（路径解析 / 解包 / 归组 / 名单 / 页序）与 `scanner/tests/test_service.py`（Flask 测试客户端直打接口，**部署前**就能拦住接线问题）。
+  Two new offline suites: `scanner/tests/test_batch.py` and `scanner/tests/test_service.py` (drives the API through Flask's test client, catching wiring bugs **before** deployment).
+
 ### Fixed / 修复
 - **扫描服务：`data/` 目录不可写时整份识别结果被丢弃**。校对图写失败会连带把已经识别出来的答案一起变成「失败」——
   现在改成只降级：答案照常返回，接口标 `overlay: false`，前端显示原因而不是塞一个必然 404 的 `<img>`；
