@@ -676,6 +676,80 @@ def get_students():
                     'roster': _roster_info(exam), 'exam': _exam_view(exam)})
 
 
+# ---------------------------------------------------------------- 路由：阅卷工作台
+#
+# 阅卷工作台是「在已识别结果上做人工复核」的一层，不是新的识别流程。
+# 复核结论（逐题改判 / 复核分 / 待复核标记 / 备注）存在每个考生的 data.grading 里，
+# 跟 answers 走同一条落库/读回路径 —— 刷新、重新套名单、重启都不丢。
+
+def _sanitize_grading(body):
+    """把前端传来的 grading 收成规整形状，坏字段直接丢掉而不是静默乱存。"""
+    g = body.get('grading') if isinstance(body, dict) else None
+    if not isinstance(g, dict):
+        raise ApiError('grading 必须是对象')
+    overrides = {}
+    for k, v in (g.get('overrides') or {}).items():
+        if str(k).lstrip('-').isdigit():
+            overrides[int(k)] = bool(v)
+    ms = g.get('manualScore')
+    man = ms if isinstance(ms, (int, float)) and not isinstance(ms, bool) else None
+    return {'overrides': overrides,
+            'manualScore': man,
+            'review': bool(g.get('review')),
+            'note': str(g.get('note') or '')}
+
+
+@app.post('/api/grade')
+@AUTH.require(*auth_mod.CAN_WRITE)
+def grade():
+    exam = _exam()
+    body = request.get_json(silent=True) or {}
+    sid = str(body.get('sid') or '').strip()
+    if not sid:
+        return _err('没给考号')
+    try:
+        grading = _sanitize_grading(body)
+    except ApiError as e:
+        return _err(e)
+    try:
+        STORE.set_student_grading(exam['id'], sid, grading)
+    except store_mod.StoreError as e:
+        return _err(str(e), 404)
+    return jsonify({'ok': True, 'sid': sid, 'grading': grading})
+
+
+@app.get('/api/gradebook')
+def gradebook():
+    """阅卷工作台的数据：每个考生的自动分、复核后分、逐题对错、复核标记。"""
+    exam = _exam(create=False)
+    if not exam:
+        return jsonify({'students': [], 'exam': None, 'qnos': [], 'key': {}, 'hasKey': False,
+                        'summary': {'count': 0, 'graded': 0, 'review': 0, 'avg': 0}})
+    key = exam['answerKey']
+    students, _ = _students_view(exam)
+    qnos = _qnos(exam, [])
+    rows = []
+    for s in students:
+        ans = s.get('answers') or {}
+        grading = s.get('grading') or {}
+        correct, eff, total, final = st.score_grading(ans, qnos, key, grading)
+        rows.append({
+            'sid': str(s.get('sid')), 'name': s.get('name') or '', 'cls': s.get('cls') or '',
+            'matched': s.get('matched'), 'sidSource': s.get('sidSource'),
+            'auto': st.score(ans, qnos, key), 'total': total,
+            'grading': grading,
+            'correct': {str(k): v for k, v in correct.items()},
+            'effective': final,
+        })
+    graded = sum(1 for r in rows if r['grading'])
+    review = sum(1 for r in rows if r['grading'].get('review'))
+    avg = (sum(r['effective'] for r in rows) / len(rows)) if rows else 0
+    return jsonify({'exam': _exam_view(exam), 'qnos': qnos, 'key': key, 'hasKey': bool(key),
+                    'students': rows,
+                    'summary': {'count': len(rows), 'graded': graded,
+                                'review': review, 'avg': round(avg, 1)}})
+
+
 # ---------------------------------------------------------------- 路由：导出
 
 @app.get('/api/roster.csv')
@@ -713,6 +787,7 @@ def export_csv():
     exam = _exam(create=False)
     key_text = request.form.get('key', '')
     key = st.parse_key(key_text) if key_text.strip() else exam['answerKey']
+    graded = request.form.get('graded') == '1'
     ids = request.form.get('ids', '').split(',') if request.form.get('ids') else None
     sheets = _sheets(exam, ids)
     if any(s.get('sid') for s in sheets):
@@ -720,14 +795,24 @@ def export_csv():
     qnos = _qnos(exam, sheets)
     with_id = any(s.get('sid') for s in sheets)
 
+    # 复核分导出：把人工改判合并进去。grading 是按考号挂在考生上的，先建一张映射。
+    gmap = {}
+    if graded and key:
+        for s in _students_view(exam)[0]:
+            gmap[str(s.get('sid'))] = s.get('grading')
+
     head = (['考号', '姓名', '班级'] if with_id else []) + ['文件'] \
-        + [str(q) for q in qnos] + (['得分'] if key else [])
+        + [str(q) for q in qnos] + (['复核分' if graded else '得分'] if key else [])
     rows = []
     for s in sheets:
         row = [s.get('sid', ''), s.get('stu', ''), s.get('cls', '')] if with_id else []
         row += [s.get('name', '')] + [s['answers'].get(q, {}).get('answer') or '' for q in qnos]
         if key:
-            row.append(st.score(s['answers'], qnos, key))
+            if graded:
+                _, _, _, final = st.score_grading(s['answers'], qnos, key, gmap.get(str(s.get('sid'))))
+                row.append(final)
+            else:
+                row.append(st.score(s['answers'], qnos, key))
         rows.append(row)
     csv_text = st.to_csv(rows, head)
     return Response(csv_text, mimetype='text/csv; charset=utf-8',

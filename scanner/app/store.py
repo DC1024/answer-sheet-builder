@@ -482,6 +482,32 @@ class Store:
                              f'AND sid IN ({marks}) ORDER BY seq, sid', (exam_id, *sids))
         return [_fix_qkeys(_loads(r['data'], {}) or {}, False) for r in rows]
 
+    def set_student_grading(self, exam_id, sid, grading):
+        """把人工复核结果写进某个考生的 data.grading。
+
+        不碰其余字段 —— 识别出来的答案、补录的姓名都原样保留。grading 是整个学生字典
+        里的一个普通键，store 用 `_fix_qkeys` 整条落库、整条读回，所以它会跟着
+        `save_students` / 重新套名单一起活下来（跟 answers 同一条往返路径，不另搞一套）。
+        """
+        row = self._one('SELECT data FROM exam_students WHERE exam_id=? AND sid=?',
+                        (exam_id, str(sid)))
+        if not row:
+            raise StoreError('没有这个考生：' + str(sid))
+        d = _fix_qkeys(_loads(row['data'], {}) or {}, False)
+        d['grading'] = grading
+        with self._lock:
+            try:
+                self.conn.execute('BEGIN')
+                self.conn.execute(
+                    'UPDATE exam_students SET data=? WHERE exam_id=? AND sid=?',
+                    (_dumps(_fix_qkeys(d, True)), exam_id, str(sid)))
+                self.conn.execute('UPDATE exams SET updated_at=? WHERE id=?', (now(), exam_id))
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+        return d
+
     # ---------------------------------------------------------- 单张扫描结果
     def add_scans(self, exam_id, items):
         """items: [(rid, name, answers, sid, stu, cls, source)]"""

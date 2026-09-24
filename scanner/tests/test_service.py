@@ -444,6 +444,78 @@ eq(c2.post('/api/users/delete', json={'id': ADMIN2}).status_code, 200, '多出�
 ok(c2.post('/api/logout').status_code == 200 and c2.get('/api/students').status_code == 401,
    '退出登录后服务端会话真的失效（不是只清了 cookie）')
 
+print('\n=== M. 阅卷工作台：改分 / 复核 / 复核导出 ===')
+eq(login().status_code, 200, '重新登录主账号以继续')
+# 把第 1 题强制判错，并标记待复核 + 备注
+r = c.post('/api/grade', json={'sid': '2026010234', 'grading': {
+    'overrides': {1: False}, 'manualScore': None, 'review': True, 'note': '复核测试'}})
+ok(r.status_code == 200 and (r.get_json() or {}).get('ok'), '保存复核结果 200', str(r.get_json())[:120])
+gj = c.get('/api/gradebook').get_json() or {}
+row = next((x for x in gj.get('students') or [] if x['sid'] == '2026010234'), {})
+ok(row.get('grading', {}).get('review') is True, 'gradebook 回显待复核标记')
+eq(row.get('grading', {}).get('note'), '复核测试', 'gradebook 回显备注')
+eq(row.get('auto'), 19, '原始分（自动）为 19')
+eq(row.get('effective'), 18, '第1题强制判错后复核分变 18')
+ov = {str(k): v for k, v in (row.get('grading', {}).get('overrides') or {}).items()}
+eq(ov.get('1'), False, 'overrides 往返后保留（题号键归一化为字符串）')
+others = [x for x in gj.get('students') or [] if x['sid'] != '2026010234']
+ok(all(not x.get('grading', {}).get('review') for x in others), '其余卷子仍无复核标记')
+# 复核导出：graded=1 → 得分列换成复核分
+r = c.post('/api/export.csv', data={'key': KEY_S01, 'graded': '1'})
+gl = [l for l in r.data.decode('utf-8-sig').strip().splitlines() if l.strip()]
+ok(gl[0].endswith(',复核分'), '复核导出表头带「复核分」', gl[0][-20:])
+zhang = next((l for l in gl[1:] if '2026010234' in l), '')
+eq(zhang.split(',')[-1], '18', '复核导出里该生得分是 18 不是 19')
+# 只读身份不能改分，但能看工作台。
+# 注：本套测试用的是独立临时库，section L 里 viewer1 已被删掉，这里新建一个只读账号。
+r = c.post('/api/users', json={'username': 'viewer2', 'password': 'v2pass123', 'role': 'viewer',
+                               'display': '只读2'})
+ok(r.status_code == 200, '新建只读账号用于权限校验', str(r.get_json())[:120])
+c4 = server2.app.test_client()
+eq(login(c4, 'viewer2', 'v2pass123').status_code, 200, '只读账号登录')
+eq(c4.post('/api/grade', json={'sid': '2026010234', 'grading': {}}).status_code, 403,
+   '只读身份不能保存复核（403）')
+eq(c4.get('/api/gradebook').status_code, 200, '只读身份可以看工作台')
+
+print('\n=== N. 批量内嵌名单必须真正覆盖匹配（不能沿用旧名单）===')
+# 真实线上出现过：库里残留一份「含 2026010237」的历史名单，批量上传 zip 内嵌一份
+# 「不含 237」的新名单时，如果 _load_roster 只把新名单写进库、却没让后续 bt.match 用上
+# 新名单（in-memory exam['roster'] 还是旧的），237 会被旧名单误判为「已匹配」。
+# 用全新考试隔离，避免被前面 section 残留的补录/名单干扰。
+r = c.post('/api/exams', json={'name': 'N-名单覆盖隔离'})
+ok(r.status_code == 200 and (r.get_json() or {}).get('ok'), '为 N 新建一个考试', str(r.get_json())[:120])
+r = upload_template()
+ok(r.status_code == 200 and (r.get_json() or {}).get('ok'), '新考试上传模板')
+ROSTER_STALE = ('考号,姓名,班级\n'
+                '2026010234,张伟明,高三(12)班\n'
+                '2026010235,李思,高三(12)班\n'
+                '2026010236,王五,高三(12)班\n'
+                '2026010237,陈七,高三(12)班\n'
+                '2026010299,赵六,高三(12)班\n')
+r = c.post('/api/roster', data={'file': (io.BytesIO(ROSTER_STALE.encode('utf-8')), '旧名单.csv')})
+ok(r.status_code == 200 and (r.get_json() or {}).get('roster', {}).get('count') == 5,
+   '先植一份含 237 的历史名单（5 人）', str(r.get_json())[:120])
+zip_n = mkzip([
+    ('一个班/2026010234/正面.png', img('s01.png')),
+    ('一个班/2026010235/正面.png', img('s02.png')),
+    ('一个班/2026010236.png', img('s03.png')),
+    ('一个班/2026010237.png', img('s04.png')),
+    ('一个班/名单.csv', ROSTER.encode('utf-8')),   # 4 行，无 237
+])
+r = post_batch(zip_n)
+j = r.get_json() or {}
+ok(r.status_code == 200, '批量接口 200', f'HTTP {r.status_code} {str(j)[:120]}')
+eq((j.get('roster') or {}).get('count'), 4, '内嵌名单被采用（4 人）')
+stus_n = j.get('students') or []
+mn = {s['sid']: s for s in stus_n}
+ok(mn['2026010237']['matched'] is False
+   and any('不在名单里' in i for i in mn['2026010237']['issues']),
+   '内嵌名单覆盖旧名单：237 在新名单里没有 → 不被旧名单误判为已匹配',
+   str(mn['2026010237'].get('issues')))
+ok(mn['2026010234']['matched'] is True, '新名单里的人仍匹配')
+warns_n = ' | '.join(j.get('warnings') or [])
+ok('不在名单里' in warns_n, '提示有考号不在名单里（按新名单判定）', warns_n[:100])
+
 print('\n' + '=' * 56)
 if FAILS:
     print(f'⚠️  {len(FAILS)} 项未通过：')

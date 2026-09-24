@@ -64,6 +64,29 @@ All notable changes to this project are documented here.
   **Deploy: the compose healthcheck now hits `/api/health`** — `/api/template` requires auth now, so the old
   probe would mark the container unhealthy.
 
+- **阅卷工作台（在识别结果上人工复核 / 改分 / 标注）**。识别完不等于判分完 —— 机器判错的题、
+  想给总分加减、想标「这卷子已复核 / 备注一句」都常发生。新增 `⑥ 阅卷工作台` 卡片：按考生逐张复核，
+  每题可单独把判定覆盖成「对 / 错 / 恢复自动」，可填**手动总分覆盖**（不填则按自动判分），
+  可勾**已复核**并写备注；工作台汇总「已复核人数 / 待复核 / 标记人数 / 平均分」。导出成绩 CSV 时
+  勾「仅复核过的」会用 `复核分`（手动分优先、否则自动分）替代原来的自动分，表头也换成「复核分」。
+  读写接口：`POST /api/grade`（写权限）、`GET /api/gradebook`（默认网关，只读也能看）。
+  **Grading workbench — manual review / score adjustment / flagging on top of recognized results.**
+  New `⑥ 阅卷工作台` card: per-student review, per-question override (correct / wrong / auto),
+  optional manual total-score override, a "reviewed" flag and a note; the workbench summarizes
+  reviewed / pending / flagged counts and the average. Exporting the score CSV with "graded only"
+  emits a `复核分` column (manual score wins, else auto) instead of the raw auto score.
+
+  **关键设计：阅卷是「覆盖层」，不改 schema、不冲掉识别结果。** 复核结论作为 `grading` 存进
+  考生字典 `data` 的顶层键，走和 `answers` 完全相同的 `_fix_qkeys` 往返（题号 int↔字符串归一化），
+  因此**重识别 / 重套名单 / 重启都不会丢复核结论** —— 因为 `bt.match()` 是就地改考生字典，
+  会保留任意顶层键。钉在 `test_store.py` 的 K 节（存进去再读回来、重存仍在、未知考号报错）与
+  `test_service.py` 的 M 节（改分 / 复核 / 只读 403 / 复核导出）。
+  **Key design: grading is an overlay — no schema change, recognition results are untouched.**
+  The review conclusion lives as a top-level `grading` key in the student `data` blob, round-tripping
+  through the same `_fix_qkeys` as `answers`, so **re-matching / re-storing / restart never drop it**
+  (`bt.match()` mutates the student dict in place and preserves arbitrary top-level keys). Pinned in
+  `test_store.py` §K and `test_service.py` §M.
+
 ### Changed / 变更
 - **扫描服务数据结构从「内存 STATE」迁到 SQLite**：所有接口改按 `exam_id` 读写；`/api/template` 现在需要登录
   （上传模板走写权限）。前端新增考试下拉、账号/角色 UI、`⑤ 账号管理`卡片（仅管理员可见）。

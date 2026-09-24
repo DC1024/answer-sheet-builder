@@ -211,6 +211,37 @@ eq(peer.exam(ex['id'])['name'], '类型往返', '考试名也对得上')
 peer.close()
 st_.close()
 
+print('\n=== K. 阅卷工作台：grading 随考生落库、不随重识别丢失 ===')
+# section J 末尾把 st_ 关了（验证「换进程读同一库」），这里重新打开同一个文件继续测。
+st_ = S.Store(DB)
+# 老师改完分，刷新/重新套名单/重启都不能让复核结论消失 —— 这是工作台能不能用的底线。
+gx = st_.create_exam('阅卷工作台', owner_id=None)
+st_.save_students(gx['id'], [stu('2026010234', ANS, '张伟明')])
+st_.set_student_grading(gx['id'], '2026010234',
+                        {'overrides': {1: True, 3: False}, 'manualScore': 5,
+                         'review': True, 'note': '存疑'})
+got = st_.students(gx['id'])[0]
+ov = {int(k): v for k, v in (got.get('grading', {}).get('overrides') or {}).items()}
+eq(ov.get(1), True, 'grading.overrides 读回（题号键归一化为 int）')
+eq(got['grading'].get('review'), True, 'grading.review 落库并读回')
+eq(got['grading'].get('manualScore'), 5, 'grading.manualScore 落库并读回')
+# 重新套名单 / 重新保存：grading 必须跟着学生一起活下来
+survive = st_.students(gx['id'])
+st_.save_students(gx['id'], survive)
+back = st_.students(gx['id'])[0]
+eq(back.get('grading', {}).get('review'), True,
+   'save_students 重存之后 grading 仍在（重识别/重套名单不丢复核结论）')
+# 二次覆盖：overrides 整体替换，不是和旧值合并
+st_.set_student_grading(gx['id'], '2026010234',
+                        {'overrides': {2: False}, 'manualScore': None, 'review': False, 'note': ''})
+g2 = st_.students(gx['id'])[0]['grading']
+ov2 = {int(k): v for k, v in (g2.get('overrides') or {}).items()}
+eq(ov2.get(2), False, 'overrides 整体替换（旧覆盖被清）')
+eq(g2.get('manualScore'), None, 'manualScore 清空生效')
+eq(g2.get('review'), False, 'review 覆盖为 False')
+raises(lambda: st_.set_student_grading(gx['id'], '不存在', {}), S.StoreError,
+       '对不存在的考生存复核 → 报错而不是静默写空')
+
 print('\n' + '=' * 56)
 if FAILS:
     print(f'⚠️  {len(FAILS)} 项未通过：')

@@ -98,6 +98,41 @@ def score(answers, question_numbers, key):
                if key.get(q) and answers.get(q, {}).get('answer') == key.get(q))
 
 
+def score_grading(answers, question_numbers, key, grading):
+    """把人工复核叠加到自动判分之上，返回四元组：
+
+      (correct_map, effective, total, final)
+
+    - correct_map: {题号: True/False/None}，None 表示该题无标准答案、不参与判分。
+    - effective: 逐题按「有复核用复核、没复核用自动」折算出来的对题数。
+    - total: 有标准答案的题数。
+    - final: 复核分。grading.manualScore 给了数字就直接用（覆盖逐题折算），否则等于 effective。
+
+    题号键可能是字符串（JSON 读回来）也可能是 int（内存里），这里统一归一化成 int 再比对。
+    """
+    grading = grading or {}
+    ov = {}
+    for k, v in (grading.get('overrides') or {}).items():
+        try:
+            ov[int(k)] = bool(v)
+        except (TypeError, ValueError):
+            pass
+    correct, eff, total = {}, 0, 0
+    for q in question_numbers:
+        kv = (key or {}).get(q)
+        if not kv:
+            correct[q] = None
+            continue
+        total += 1
+        c = ov[q] if q in ov else (answers.get(q, {}).get('answer') == kv)
+        correct[q] = c
+        if c:
+            eff += 1
+    ms = grading.get('manualScore')
+    final = ms if isinstance(ms, (int, float)) and not isinstance(ms, bool) else eff
+    return correct, eff, total, final
+
+
 def to_csv(rows, header):
     buf = io.StringIO()
     w = csv.writer(buf)

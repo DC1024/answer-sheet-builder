@@ -87,6 +87,18 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 .warns div{margin:2px 0;}
 .bar2{height:6px;background:#eef2f7;border-radius:3px;overflow:hidden;margin:10px 0 4px;}
 .bar2 i{display:block;height:100%;background:var(--pri);transition:.2s;width:0;}
+/* ---- 阅卷工作台 ---- */
+#gbBody table th,#gbBody table td{font-size:13px;}
+#gbBody .badge{margin-right:4px;}
+.gbq{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;margin:12px 0;}
+.qrow{border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:4px;}
+.qrow .qno{font-weight:700;}
+.qrow .qd{font-size:12px;color:var(--mut);}
+.qrow select{margin-top:2px;}
+#gbModal{position:fixed;inset:0;background:rgba(20,24,30,.55);z-index:70;display:none;overflow:auto;padding:30px;}
+#gbModal.on{display:block;}
+#gbModal .box{background:#fff;border-radius:12px;max-width:780px;margin:0 auto;padding:18px 22px;box-shadow:0 12px 48px rgba(0,0,0,.32);}
+#gbModal .box h3{margin:0;font-size:15px;}
 </style>
 </head>
 <body>
@@ -179,6 +191,19 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
     </div>
   </div>
 
+  <div class="card">
+    <h2>⑥ 阅卷工作台 <span class="tag">在识别结果上人工复核 / 改分 / 标注，存盘不丢</span></h2>
+    <div class="row">
+      <button id="gbRefresh" class="ghost">刷新</button>
+      <input type="text" id="gbSearch" placeholder="搜考号 / 姓名" style="width:160px">
+      <label class="f"><input type="checkbox" id="gbReviewOnly"> 只看待复核</label>
+      <span class="hint" id="gbSum"></span>
+      <span style="flex:1"></span>
+      <button id="gbExport" class="ghost">导出复核成绩 CSV</button>
+    </div>
+    <div id="gbBody"><div class="empty">还没有识别结果，先去②批量上传</div></div>
+  </div>
+
   <!-- 只有管理员看得见（别人进来这段一直 display:none） -->
   <div class="card" id="userCard" style="display:none">
     <h2>⑤ 账号管理 <span class="tag">管理员可见 · 所有登录用户都能看到所有考试，角色只决定能不能改</span></h2>
@@ -199,6 +224,24 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 
 <div id="lb" title="点击任意处关闭"><img alt="校对图（原生分辨率）"></div>
 <div id="toast"></div>
+
+<!-- 逐生复核弹窗：逐题翻正/改判 + 复核分 + 待复核标记 + 备注 -->
+<div id="gbModal"><div class="box">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px">
+    <h3 id="gbModalTitle"></h3>
+    <button class="ghost" id="gbClose">关闭</button>
+  </div>
+  <div id="gbModalBody"></div>
+  <div class="row" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+    <label class="f"><input type="checkbox" id="gbReview"> 标记待复核</label>
+    <label class="f">复核分（可选，覆盖逐题折算） <input type="number" id="gbManual" style="width:80px" min="0"></label>
+    <label class="f">折算预览 <b id="gbPreview"></b></label>
+  </div>
+  <div class="row"><textarea id="gbNote" placeholder="备注（可选）"></textarea></div>
+  <div class="row"><button id="gbSave">保存复核</button>
+    <span class="hint">复核结果随考试存盘：刷新 / 重新套名单 / 重启服务都不会丢</span></div>
+</div></div>
+
 <script>
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
@@ -300,6 +343,7 @@ async function openExam(id){
   $('#btnDelExam').disabled = !CUR.canDelete;
   paintExam();
   await restoreBatch();
+  await loadGradebook();
 }
 
 function paintExam(){
@@ -761,32 +805,144 @@ $('#btnLogout').onclick = async () => {
   location.href = '/login';
 };
 
+// ============================================================ ⑥ 阅卷工作台
+let GB = {rows: [], qnos: [], key: {}, hasKey: false, summary: {}};
+let GEDIT = null;          // 当前正在编辑的考生（含 stu / total / sid / overrides）
+
+async function loadGradebook(){
+  const r = await apijson('/api/gradebook?' + qid());
+  if (!r.students){ $('#gbBody').innerHTML = '<div class="empty">还没有识别结果，先去②批量上传</div>'; return; }
+  GB = {rows: r.students || [], qnos: r.qnos || [], key: r.key || {},
+        hasKey: !!r.hasKey, summary: r.summary || {}};
+  renderGradebook();
+}
+
+// 折算某份卷子在「人工复核」叠加后的对题数 / 复核分（与 stats.score_grading 同算法）
+function gbEffective(stu, grading){
+  grading = grading || {};
+  const ov = grading.overrides || {};
+  let eff = 0, total = 0;
+  for (const q of (GB.qnos || [])){
+    const kv = GB.key[q];
+    if (!kv) continue;
+    total++;
+    const c = (String(q) in ov) ? !!ov[String(q)] : ((stu.answers[q] || {}).answer === kv);
+    if (c) eff++;
+  }
+  const ms = grading.manualScore;
+  return (typeof ms === 'number') ? ms : eff;
+}
+
+function renderGradebook(){
+  const sum = GB.summary || {};
+  $('#gbSum').textContent = `共 ${sum.count || 0} 人 · 已复核 ${sum.graded || 0} · 待复核 ${sum.review || 0} · 平均 ${sum.avg != null ? sum.avg : 0} 分`;
+  const q = ($('#gbSearch').value || '').trim();
+  const onlyReview = $('#gbReviewOnly').checked;
+  const rows = (GB.rows || []).filter(s => {
+    if (onlyReview && !s.grading.review) return false;
+    if (q && !(String(s.sid).includes(q) || (s.name || '').includes(q))) return false;
+    return true;
+  });
+  if (!rows.length){ $('#gbBody').innerHTML = '<div class="empty">没有匹配的卷子</div>'; return; }
+  $('#gbBody').innerHTML = `<table><thead><tr>
+    <th>考号</th><th>姓名</th><th>班级</th><th class="num">原始分</th>
+    <th class="num">复核分</th><th>标注</th><th>操作</th></tr></thead><tbody>
+    ${rows.map(s => `<tr>
+      <td>${esc(s.sid)}</td><td>${esc(s.name || '')}</td><td>${esc(s.cls || '')}</td>
+      <td class="num">${GB.hasKey ? s.auto + '/' + s.total : '—'}</td>
+      <td class="num">${GB.hasKey ? s.effective + '/' + s.total : '—'}</td>
+      <td>${(s.grading.review ? '<span class="badge warn">待复核</span>' : '')}${(s.grading.note ? '<span class="badge info">有备注</span>' : '')}</td>
+      <td><button class="ghost" data-sid="${esc(s.sid)}">复核</button></td>
+    </tr>`).join('')}</tbody></table>`;
+  $$('#gbBody button[data-sid]').forEach(b => b.onclick = () => openGrade(b.dataset.sid));
+}
+
+function openGrade(sid){
+  const s = (GB.rows || []).find(x => String(x.sid) === String(sid));
+  if (!s) return;
+  GEDIT = {sid: s.sid, stu: s, total: s.total,
+           overrides: Object.assign({}, (s.grading.overrides) || {}),
+           review: !!s.grading.review, note: s.grading.note || ''};
+  const ans = s.answers || {};
+  const key = GB.key || {};
+  let body;
+  if (!GB.hasKey){
+    body = '<div class="hint" style="padding:12px 0">请先在④汇总统计里填好「标准答案」，才能逐题复核。</div>';
+  } else {
+    body = '<div class="gbq">' + (GB.qnos || []).filter(q => key[q]).map(q => {
+      const a = ans[q] || {};
+      const det = a.answer ? a.answer : '未填';
+      const auto = s.correct ? s.correct[String(q)] : null;
+      const ov = String(q) in (GEDIT.overrides || {}) ? (GEDIT.overrides[String(q)] ? '对' : '错') : 'auto';
+      const autoTxt = auto === true ? '自动判对' : (auto === false ? '自动判错' : '无答案');
+      return `<div class="qrow">
+        <span class="qno">第 ${q} 题</span>
+        <span class="qd">填涂 <b>${esc(det)}</b> ／ 答案 <b>${esc(key[q])}</b></span>
+        <select data-q="${q}">
+          <option value="auto"${ov === 'auto' ? ' selected' : ''}>${autoTxt}</option>
+          <option value="correct"${ov === '对' ? ' selected' : ''}>判对</option>
+          <option value="wrong"${ov === '错' ? ' selected' : ''}>判错</option>
+        </select>
+      </div>`;
+    }).join('') + '</div>';
+  }
+  $('#gbModalBody').innerHTML = body;
+  $('#gbModalTitle').textContent = `${s.sid} ${s.name || ''} ${s.cls || ''}`.trim();
+  $('#gbReview').checked = GEDIT.review;
+  $('#gbNote').value = GEDIT.note;
+  $('#gbManual').value = (GEDIT.manualScore != null) ? GEDIT.manualScore : '';
+  $$('#gbModalBody select[data-q]').forEach(sel => sel.onchange = updateGbPreview);
+  $('#gbManual').oninput = updateGbPreview;
+  updateGbPreview();
+  $('#gbModal').classList.add('on');
+}
+
+function updateGbPreview(){
+  if (!GEDIT) return;
+  const overrides = {};
+  $$('#gbModalBody select[data-q]').forEach(sel => {
+    if (sel.value === 'correct') overrides[sel.dataset.q] = true;
+    else if (sel.value === 'wrong') overrides[sel.dataset.q] = false;
+  });
+  const grading = Object.assign({}, GEDIT, {overrides,
+    manualScore: ($('#gbManual').value.trim() === '' ? null : Number($('#gbManual').value))});
+  const eff = gbEffective(GEDIT.stu, grading);
+  $('#gbPreview').textContent = String(eff) + (GB.hasKey ? (' / ' + GEDIT.total) : '');
+}
+
+async function saveGrade(){
+  if (!GEDIT) return;
+  const overrides = {};
+  $$('#gbModalBody select[data-q]').forEach(sel => {
+    if (sel.value === 'correct') overrides[sel.dataset.q] = true;
+    else if (sel.value === 'wrong') overrides[sel.dataset.q] = false;
+  });
+  const manualRaw = $('#gbManual').value.trim();
+  const grading = {
+    overrides,
+    manualScore: manualRaw === '' ? null : Number(manualRaw),
+    review: $('#gbReview').checked,
+    note: $('#gbNote').value,
+  };
+  const r = await postj('/api/grade', {sid: GEDIT.sid, grading});
+  if (r.error) return toast(r.error);
+  toast('已保存复核');
+  $('#gbModal').classList.remove('on');
+  await loadGradebook();
+}
+
+$('#gbRefresh').onclick = () => loadGradebook();
+$('#gbSearch').oninput = renderGradebook;
+$('#gbReviewOnly').onchange = renderGradebook;
+$('#gbExport').onclick = () => download('/api/export.csv', {key: $('#key').value, graded: '1'}, 'graded.csv');
+$('#gbClose').onclick = () => $('#gbModal').classList.remove('on');
+$('#gbSave').onclick = saveGrade;
+$('#gbModal').addEventListener('click', e => { if (e.target.id === 'gbModal') $('#gbModal').classList.remove('on'); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#gbModal').classList.remove('on'); });
+
 // ============================================================ 启动
 refreshSel();
 boot().catch(e => toast('初始化失败：' + e));
-  $('#statsInfo').textContent = `${r.sheetCount} 份 · ${r.questions.length} 题` + (r.hasKey ? ' · 已按标准答案判分' : ' · 未填标准答案（仅统计分布）');
-  $('#qstats').innerHTML = `<table><thead><tr><th>题号</th><th>答案</th>${r.hasKey?'<th class="num">正确率</th><th class="num">正确</th>':''}<th>分布</th><th class="num">未填</th><th class="num">存疑</th></tr></thead><tbody>
-    ${r.questions.map(q => {
-      const dist = Object.keys(q.dist).map(k => `${k}:${q.dist[k]}`).join(' ') || '—';
-      const bar = r.hasKey ? `<div class="bar" title="${q.rate}%"><i style="width:${q.rate||0}%"></i></div>` : '';
-      return `<tr><td>${q.no}</td><td>${q.key||'—'}</td>${r.hasKey?`<td class="num">${q.rate}%${bar}</td><td class="num">${q.correct}</td>`:''}<td>${dist}</td><td class="num">${q.blank}</td><td class="num">${q.doubt}</td></tr>`;
-    }).join('')}</tbody></table>`;
-  $('#sstats').innerHTML = `<table><thead><tr><th>考生</th><th class="num">得分</th><th class="num">未填</th><th class="num">存疑</th><th>错题</th></tr></thead><tbody>
-    ${r.sheets.map(s => `<tr><td>${esc(s.name)}</td><td class="num">${s.score}${r.hasKey?`/${s.total}`:''}</td><td class="num">${s.blank}</td><td class="num">${s.doubt}</td>
-      <td>${s.wrong.map(w=>`${w.no}(${w.chose}→${w.key})`).join(' ') || '—'}</td></tr>`).join('')}</tbody></table>`;
-};
-
-function download(url, fields, filename){
-  const fd = new FormData();
-  for (const [k, v] of Object.entries(fields)) fd.append(k, v);
-  fetch(url, {method:'POST', body:fd}).then(r => r.blob()).then(b => {
-    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = filename; a.click();
-  });
-}
-$('#btnCsv').onclick = () => download('/api/export.csv', {key: $('#key').value}, 'omr-answers.csv');
-$('#btnRosterCsv').onclick = () => { const a = document.createElement('a'); a.href = '/api/roster.csv'; a.click(); };
-
-refreshSel();
 </script>
 </body>
 </html>
