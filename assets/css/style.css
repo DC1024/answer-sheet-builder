@@ -179,7 +179,11 @@ button:disabled:hover{background:#f3f5f8;}
 
 /* 填空 */
 /* line-height 也跟随「行间距」--> 修复：小题内换行后（第一行与第二行）行距不生效 */
-.fill-q{line-height:max(1.4em, var(--fg,6mm));margin:0 0 var(--fg,6mm);}
+/* 行距统一：line-height 决定每一行的行距（含折行后的行）。
+   .fill-q 之间不再额外加 margin —— 否则「题与题之间 = line-height + margin」
+   会变成行距的两倍（实测 16mm 设成 32.1mm），正是「行距不均匀」的根因。
+   行框相接后，题间行距 = 题内行距 = --fg，天然均匀。 */
+.fill-q{line-height:max(1.4em, var(--fg,6mm));margin:0;}
 /* 行内流式：一行没排满就继续往同一行放，排满才换行。
    每个小题是原子块（inline-block）→ 换行时整块下移，不会把「（2）」和它的空格拆开；
    max-width:100% 保证单个小题自身过宽时内部换行，而不是撑出纸张。 */

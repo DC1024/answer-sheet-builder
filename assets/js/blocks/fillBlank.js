@@ -93,7 +93,7 @@ export default {
       </label>
       <div id="fb-tree"></div>
       <button class="addbtn" data-act="add-root">+ 增加大题</button>
-      <p class="hint">小题编号按层级自动生成：小题为（1）（2）、小小题为①②、再深为 a) b)。留空即自动编号，填内容可手写覆盖。行间距同时作用于大题之间与折行后的行距。</p>
+      <p class="hint">小题编号按层级自动生成：小题为（1）（2）、小小题为①②、再深为 a) b)。留空即自动编号，填内容可手写覆盖。<b>行间距决定每一行的行距，大题之间与折行后的行距保持一致</b>（过小时会按 1.4 倍字号兜底，防止上下行重叠）。</p>
     `;
 
     const tree = container.querySelector('#fb-tree');
