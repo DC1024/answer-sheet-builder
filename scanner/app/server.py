@@ -78,19 +78,31 @@ def scan():
                               fill_min=fill_min, gap=gap)
             rid = uuid.uuid4().hex[:12]
             png = r.pop('overlayPng', None)
-            if png:
-                with open(os.path.join(DATA, rid + '.png'), 'wb') as fh:
-                    fh.write(png)
+            saved = _save_overlay(rid, png) if png else False
             answers = {q['no']: {'answer': q['answer'], 'flag': q['flag'],
                                  'best': q['best'], 'second': q['second'],
                                  'ratios': q['ratios'], 'inks': q['inks']}
                        for q in r['questions']}
             STATE['results'][rid] = {'name': f.filename, 'answers': answers}
-            r.update({'id': rid, 'name': f.filename, 'ok': True})
+            r.update({'id': rid, 'name': f.filename, 'ok': True, 'overlay': saved})
+            if png and not saved:
+                # 校对图存不下来不该让整份结果作废 —— 答案已经识别出来了
+                r['overlayError'] = '校对图无法写入 data/（检查挂载目录是否存在且可写）'
         except Exception as e:
             r = {'ok': False, 'name': f.filename, 'error': str(e)}
         out.append(r)
     return jsonify({'results': out})
+
+
+def _save_overlay(rid, png):
+    """写校对图。目录可能因挂载变动而消失，所以每次写入前都重新确认一次。"""
+    try:
+        os.makedirs(DATA, exist_ok=True)
+        with open(os.path.join(DATA, rid + '.png'), 'wb') as fh:
+            fh.write(png)
+        return True
+    except OSError:
+        return False
 
 
 @app.get('/api/overlay/<rid>.png')

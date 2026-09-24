@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>答题卡扫描识别 · Answer Sheet Scanner</title>
+<!-- 内联 SVG 图标：省掉一次 favicon.ico 的 404 -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%232b6cb0'/><circle cx='11' cy='11' r='4' fill='%23fff'/><circle cx='21' cy='21' r='4' fill='%23fff'/></svg>">
 <style>
 :root{--bg:#f5f7fa;--card:#fff;--line:#e3e8ef;--fg:#2b3440;--mut:#7b8794;--pri:#2b6cb0;--ok:#2f9e44;--warn:#e8a33d;--err:#d64545;}
 *{box-sizing:border-box}
@@ -31,7 +33,14 @@ th{background:#f7fafc;font-weight:600;}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 .sheet{border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:12px;background:#fff;}
 .sheet .hd{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;}
-.sheet img{max-width:420px;width:100%;border:1px solid var(--line);border-radius:6px;background:#fff;}
+.sheet img{border:1px solid var(--line);border-radius:6px;background:#fff;display:block;}
+/* 校对图要占满左栏并支持点击放大 —— 圈旁标的墨迹值在缩略图上根本看不清 */
+.ov{position:relative;cursor:zoom-in;}
+.ov img{width:100%;}
+.ov .ovtip{position:absolute;right:8px;bottom:8px;background:rgba(43,52,64,.78);color:#fff;font-size:11px;padding:2px 8px;border-radius:10px;pointer-events:none;}
+#lb{position:fixed;inset:0;background:rgba(20,24,30,.88);z-index:60;display:none;overflow:auto;padding:20px;cursor:zoom-out;}
+#lb.on{display:block;}
+#lb img{display:block;margin:0 auto;max-width:none;background:#fff;border-radius:4px;}
 .badge{font-size:11px;border-radius:10px;padding:1px 8px;border:1px solid var(--line);color:var(--mut);}
 .badge.ok{color:var(--ok);border-color:#b7e4c7;background:#ebfbee;}
 .badge.warn{color:var(--warn);border-color:#f3d9a4;background:#fff9db;}
@@ -98,6 +107,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
   </div>
 </div>
 
+<div id="lb" title="点击任意处关闭"><img alt="校对图（原生分辨率）"></div>
 <div id="toast"></div>
 <script>
 const $ = s => document.querySelector(s);
@@ -105,6 +115,15 @@ let toastT = null;
 function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('on'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('on'),1800); }
 const flagText = {ok:'已选', multi:'多选/难分', faint:'浅涂', blank:'未填'};
 const flagCls = {ok:'ok', multi:'warn', faint:'warn', blank:'err'};
+
+// 校对图点击放大：按原生分辨率显示，看清每个圈旁的墨迹值。Esc / 点任意处关闭。
+function openLb(src){ const lb=$('#lb'); lb.querySelector('img').src = src; lb.classList.add('on'); }
+$('#lb').onclick = () => $('#lb').classList.remove('on');
+document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#lb').classList.remove('on'); });
+document.addEventListener('click', e => {
+  const ov = e.target.closest && e.target.closest('.ov');
+  if (ov) openLb(ov.dataset.src);
+});
 
 $('#btnTpl').onclick = async () => {
   const f = $('#tplFile').files[0];
@@ -147,13 +166,19 @@ function renderResults(list){
       return {q, cells, head};
     });
     const head = rows[0] ? rows[0].head : '';
+    // 校对图存不下来时不要塞一个必然 404 的 <img>，否则左边只剩一个碎图标
+    const left = r.overlay === false
+      ? `<div class="hint">${esc(r.overlayError || '校对图不可用')}</div>`
+      : `<div class="ov" data-src="/api/overlay/${r.id}.png" title="点击放大（原生分辨率）">
+           <img src="/api/overlay/${r.id}.png" alt="校对图"><span class="ovtip">点击放大</span>
+         </div>`;
     d.innerHTML = `
       <div class="hd">
         <div><b>${esc(r.name)}</b> <span class="badge ${bad?'warn':'ok'}">${r.questions.length} 题 · ${bad?bad+' 题存疑':'全部确定'}</span></div>
         <span class="hint">面 ${r.page} · ${r.pxPerMm}px/mm</span>
       </div>
       <div class="grid2">
-        <div><img src="/api/overlay/${r.id}.png" alt="校对图"></div>
+        ${left}
         <div style="max-height:420px;overflow:auto;">
           <table><thead><tr><th>题号</th><th>答案</th><th>判定</th>${head}</tr></thead><tbody>
           ${rows.map(x => `<tr><td>${x.q.no}</td><td><b>${x.q.answer||'—'}</b></td>

@@ -111,6 +111,9 @@ def main():
                 check(False, f"{it.get('name')} 识别失败", str(it.get('error'))[:120])
                 continue
             ids.append(it['id'])
+            if it.get('overlay') is False:
+                check(False, '校对图写入失败（检查 data/ 挂载目录是否存在且可写）',
+                      str(it.get('overlayError'))[:120])
             stem = os.path.splitext(it['name'])[0].replace('_phone', '')
             exp = expected.get(stem) or {}
             got = {q['no']: q['answer'] for q in it['questions']}

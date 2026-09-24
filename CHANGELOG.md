@@ -3,6 +3,24 @@
 All notable changes to this project are documented here.
 本项目所有重要变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Fixed / 修复
+- **扫描服务：`data/` 目录不可写时整份识别结果被丢弃**。校对图写失败会连带把已经识别出来的答案一起变成「失败」——
+  现在改成只降级：答案照常返回，接口标 `overlay: false`，前端显示原因而不是塞一个必然 404 的 `<img>`；
+  写入前重新 `makedirs`，以应对挂载目录被外部改动的情况。
+  **Scanner: a failed overlay write no longer discards the whole result** — answers are still returned, the
+  response carries `overlay: false`, and the front end explains why instead of emitting a guaranteed-404 `<img>`.
+  The directory is re-created right before each write so external mount changes can't break it.
+- **扫描服务：校对图看不清**。缩略图被限制在 420px，而圈旁标的墨迹值正是核验判定对不对的依据。
+  改为占满整栏 + **点击按原生分辨率放大**（Esc / 点任意处关闭）。
+  **Scanner: the proof overlay was too small to read.** It now fills the column and **click-to-zooms at
+  native resolution** (close with Esc or a click).
+- 部署脚本不再 `rm -rf` 远程目录下的 `data/`，并改用 `--force-recreate` 重建容器 ——
+  宿主 bind mount 目录被重建后，旧容器仍指向已删除的 inode，表现为「校对图偶发写不出来」。
+  The deploy script no longer wipes `data/` and now uses `--force-recreate`, because a container whose
+  host bind-mount directory was recreated keeps pointing at the deleted inode.
+
 ## [1.0.2] - 2026-09-25
 
 ### Added / 新增
