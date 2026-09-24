@@ -1,0 +1,8 @@
+services:
+  answer-sheet-builder:
+    build: .
+    image: answer-sheet-builder:1.0.0
+    container_name: asb
+    ports:
+      - "8080:80"
+    restart: unless-stopped

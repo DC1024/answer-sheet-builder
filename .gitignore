@@ -1,0 +1,16 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# logs
+*.log
+npm-debug.log*
+
+# deps (项目本身无依赖，预留)
+node_modules/
+
+# 本地临时文件
+*.tmp
+_rendertest.mjs

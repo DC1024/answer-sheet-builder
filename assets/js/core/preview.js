@@ -1,0 +1,108 @@
+// 预览渲染：固定纸张分页（item 2）
+// 纸张大小固定，不随内容变化；内容先填满 A3 第一面（双栏），再第二面，再第二页第一面……
+// 实现：JS 分页引擎 —— 测量每个区块真实高度，按固定页高塞入固定尺寸 .page 卡片。
+import { store } from './store.js';
+import { registry } from './registry.js';
+
+// 纸张物理尺寸(mm)
+const DIMS = {
+  A3: { w: 297, h: 420 },
+  A4: { w: 210, h: 297 }
+};
+
+// 像素/毫米换算（浏览器中 1mm = 96/25.4 px，但用真实测量更稳）
+let _mmPx = 0;
+function mmPx(){
+  if (_mmPx) return _mmPx;
+  const d = document.createElement('div');
+  d.style.cssText = 'position:absolute;left:-99999px;top:0;width:1mm;height:1mm;';
+  document.body.appendChild(d);
+  _mmPx = d.getBoundingClientRect().width;
+  d.remove();
+  return _mmPx;
+}
+
+export function renderPreview(el){
+  const { size, orientation } = store.paper;
+  const dim = DIMS[size] || DIMS.A4;
+  let pw = dim.w, ph = dim.h;
+  if (orientation === 'landscape') [pw, ph] = [ph, pw];
+  const isA3 = size === 'A3';
+  const cols = isA3 ? 2 : 1;               // 每面栏数（A3 双栏 / A4 单栏）
+  const padX = 7, padY = 6;                // 页内边距(mm)，与打印 @page margin:0 + .page padding 对应
+  const contentW = pw - padX * 2;
+  const contentH = ph - padY * 2;
+  const colGap = 6;
+  const colW = cols > 1 ? (contentW - colGap) / 2 : contentW;
+  const mm = mmPx();
+  const contentHpx = contentH * mm;
+  const marginPx = 6 * mm;                 // .blk margin-bottom
+
+  // 1) 渲染所有区块为真实 DOM，便于测量高度
+  const meas = document.createElement('div');
+  meas.style.cssText = 'position:absolute;left:-99999px;top:0;visibility:hidden;';
+  meas.style.width = pw + 'mm';
+  document.body.appendChild(meas);
+
+  const blockEls = store.blocks.map(b => {
+    const mod = registry.get(b.type);
+    const wrap = document.createElement('div');
+    if (mod){
+      try { wrap.innerHTML = mod.render(b.config); }
+      catch(e){ wrap.innerHTML = `<div class="blk" style="color:#c0392b">[渲染错误:${b.type}]</div>`; }
+    }
+    meas.appendChild(wrap);
+    return wrap.firstElementChild; // 真实 .blk 元素
+  });
+
+  // 2) 分页：每面一张固定尺寸卡片；A3 面内按 2 栏排布
+  const pages = [];
+  let colHeights = new Array(cols).fill(0);
+  let cur = null;
+
+  function newPage(){
+    cur = document.createElement('div');
+    cur.className = 'page';
+    cur.style.cssText = `width:${pw}mm;height:${ph}mm;padding:${padY}mm ${padX}mm;`;
+    cur._cols = [];
+    for (let c = 0; c < cols; c++){
+      const col = document.createElement('div');
+      col.className = 'col';
+      if (cols > 1) col.style.marginRight = (c < cols - 1 ? colGap + 'mm' : '0');
+      cur.appendChild(col);
+      cur._cols.push(col);
+    }
+    pages.push(cur);
+    colHeights = new Array(cols).fill(0);
+    return cur;
+  }
+  if (store.blocks.length) newPage();
+
+  for (const blk of blockEls){
+    // 在栏宽下测量该区块高度（px）
+    const probe = document.createElement('div');
+    probe.style.cssText = `position:absolute;left:-99999px;top:0;width:${colW}mm;visibility:hidden;`;
+    probe.appendChild(blk);
+    meas.appendChild(probe);
+    const bh = blk.getBoundingClientRect().height;
+    probe.remove();
+
+    // 选当前最矮的栏
+    let target = 0;
+    for (let c = 1; c < cols; c++) if (colHeights[c] < colHeights[target]) target = c;
+
+    // 当前面放不下且本面已有内容 -> 新面
+    if (colHeights[target] + bh + marginPx > contentHpx && colHeights[target] > 0.5){
+      newPage();
+      target = 0;
+    }
+    cur._cols[target].appendChild(blk);
+    colHeights[target] += bh + marginPx;
+  }
+
+  meas.remove();
+
+  // 3) 输出
+  el.innerHTML = '';
+  pages.forEach(p => el.appendChild(p));
+}

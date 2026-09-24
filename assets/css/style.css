@@ -1,0 +1,160 @@
+:root{
+  --sheet-w: 297mm;
+  --page-h: 420mm;
+  --line: #1a1a1a;
+  --accent: #2b6cb0;
+  --bg: #eef1f5;
+  --panel: #fff;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;font-family:"Microsoft YaHei","SimSun",system-ui,sans-serif;color:#222;background:var(--bg);}
+button{font-family:inherit;cursor:pointer;border:1px solid #c4ccd6;background:#fff;border-radius:6px;padding:6px 10px;font-size:13px;}
+button:hover{background:#f1f4f8;}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+button.primary:hover{background:#245a93;}
+button.danger{border-color:#e06a6a;color:#c0392b;}
+
+/* 顶栏 */
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:#fff;border-bottom:1px solid #d7dde5;flex:0 0 auto;}
+.brand{font-size:18px;font-weight:800;}
+.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.tools label{font-size:13px;display:flex;align-items:center;gap:4px;}
+.tools select{padding:5px 6px;border-radius:6px;border:1px solid #c4ccd6;font-size:13px;}
+
+/* 三栏 */
+.app{display:flex;height:calc(100vh - 53px);}
+.left{width:280px;display:flex;flex-direction:column;border-right:1px solid #d7dde5;background:var(--panel);}
+.center{flex:1;overflow:auto;background:#dfe4ea;padding:20px;}
+.right{width:320px;border-left:1px solid #d7dde5;background:var(--panel);display:flex;flex-direction:column;}
+.panel{padding:12px;border-bottom:1px solid #e6eaef;}
+.panel.grow{flex:1;overflow:auto;}
+.panel h3{font-size:14px;margin-bottom:10px;color:#334;}
+
+/* 题型面板 */
+.palette{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.palette .pbtn{display:flex;flex-direction:column;align-items:center;gap:2px;padding:12px 6px;border:1px dashed #9fb3c8;border-radius:8px;background:#f7fafc;font-size:13px;}
+.palette .pbtn .ic{font-size:20px;}
+.palette .pbtn:hover{background:#eaf2fb;border-color:var(--accent);}
+
+/* 结构列表 */
+.structure{display:flex;flex-direction:column;gap:8px;}
+.struct-item{display:flex;align-items:center;gap:8px;border:1px solid #d7dde5;border-radius:8px;padding:8px 10px;background:#fff;}
+.struct-item.sel{border-color:var(--accent);box-shadow:0 0 0 2px #cfe2f5;}
+.struct-item .handle{cursor:grab;color:#9aa7b3;font-size:16px;}
+.struct-item .nm{flex:1;font-size:13px;font-weight:600;}
+.struct-item .acts{display:flex;gap:4px;}
+.struct-item .acts button{padding:3px 7px;font-size:12px;}
+.struct-item.dragging{opacity:.4;}
+.struct-item.drop-before{border-top:2px solid var(--accent);}
+.struct-item.drop-after{border-bottom:2px solid var(--accent);}
+
+/* 属性面板 */
+.props{font-size:13px;}
+.props .hint{color:#888;font-size:13px;}
+.props label{display:block;margin:8px 0;font-size:13px;}
+.props input[type=text],.props input[type=number],.props select,.props textarea{
+  width:100%;padding:6px 8px;border:1px solid #c4ccd6;border-radius:6px;font-size:13px;margin-top:3px;font-family:inherit;
+}
+.props textarea{min-height:90px;resize:vertical;}
+.props .row{display:flex;gap:8px;}
+.props .row > *{flex:1;}
+.qlist{margin:8px 0;border:1px solid #e6eaef;border-radius:8px;padding:8px;}
+.qrow{display:flex;align-items:center;gap:8px;margin:6px 0;}
+.qrow span{font-size:13px;min-width:48px;}
+.qrow input{width:70px;}
+.qrow button{padding:3px 8px;font-size:12px;}
+.props .addbtn{margin-top:6px;width:100%;border-style:dashed;}
+
+/* 预览舞台 */
+.stage-wrap{min-height:100%;display:flex;justify-content:center;align-items:flex-start;}
+.stage{position:relative;padding:14px 0;}
+/* .sheet 仅作多页容器，单页由 .page 承载（固定纸张，item 2） */
+.sheet{
+  background:transparent;
+  box-shadow:none;
+  padding:0;
+  width:auto;
+}
+.page{
+  background:#fff;
+  box-shadow:0 4px 18px rgba(0,0,0,.18);
+  margin:0 auto 14px;
+  position:relative;
+  box-sizing:border-box;
+  display:flex;
+  align-items:stretch;
+}
+.page .col{flex:1 1 0;min-width:0;}
+
+/* ===== 答题卡内部元素 ===== */
+/* 每个题型区块统一加黑色边框（item 1） */
+.blk{margin-bottom:6mm;break-inside:avoid;-webkit-column-break-inside:avoid;border:1.5px solid var(--line);border-radius:4px;padding:6px 10px 10px;}
+.blk-title{font-size:15px;font-weight:800;margin:2px 0 6px 0;padding-left:8px;border-left:5px solid var(--accent);}
+
+/* 考生信息（边框由外层 .blk 统一提供，内层不再加框避免双层） */
+.info-box{border:none;border-radius:4px;padding:0;}
+.info-box .ib-title{font-size:16px;font-weight:800;letter-spacing:3px;text-align:center;margin-bottom:6px;}
+.info-fields{display:flex;flex-wrap:wrap;gap:14px 22px;}
+.info-field{display:flex;align-items:baseline;gap:6px;font-size:14px;}
+.info-field .lab{font-weight:700;white-space:nowrap;}
+.info-field .il{display:inline-block;border-bottom:1.5px solid var(--line);}
+
+/* 考号填涂区 + 右侧手写栏 */
+.info-body{display:flex;gap:12px;align-items:flex-start;}
+.info-body .exam-grid{flex:0 0 auto;margin-top:0;}
+.info-fields-col{display:flex;flex-direction:column;gap:12px;flex:1;justify-content:center;}
+.info-field-row{display:flex;align-items:baseline;gap:6px;font-size:14px;}
+.info-field-row .lab{font-weight:700;white-space:nowrap;}
+.info-field-row .il{display:inline-block;border-bottom:1.5px solid var(--line);}
+
+.exam-grid{border:1.5px solid var(--line);border-radius:4px;padding:6px 8px;}
+.exam-grid .eg-title{font-size:13px;font-weight:700;margin-bottom:4px;}
+.exam-grid table{border-collapse:collapse;font-size:11px;}
+.exam-grid td,.exam-grid th{border:1px solid #b9c2cc;padding:1px 3px;text-align:center;}
+.exam-grid .pos{font-weight:700;}
+.exam-grid .circ{display:inline-block;width:9px;height:9px;border:1px solid #555;border-radius:50%;vertical-align:middle;}
+
+/* 选择题 填涂/手写 */
+.sc-grid{display:grid;gap:4px 12px;}
+.scq{display:flex;align-items:center;gap:5px;font-size:13px;padding:2px 0;min-width:0;}
+.scq .scn{font-weight:800;min-width:22px;}
+.scq .bub{display:inline-flex;align-items:center;gap:2px;margin-right:5px;}
+.scq .bracket{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border:1.5px solid #333;font-size:12px;}
+.scq.hw .hw-line{flex:1;border-bottom:1.5px solid var(--line);min-height:14px;min-width:40px;}
+
+/* 填空 */
+.fill-q{font-size:14px;line-height:1.6;margin:0 0 var(--fg,6mm);}
+.fill-blank{display:inline-block;border-bottom:1.5px solid var(--line);vertical-align:middle;margin:0 4mm 0 2mm;width:30mm;height:16px;}
+
+/* 解答 */
+.ans-box{border:2px solid var(--line);border-radius:4px;display:flex;flex-direction:column;break-inside:avoid;margin-bottom:4mm;overflow:hidden;}
+.ans-box .ah{font-size:14px;font-weight:800;padding:6px 10px;border-bottom:1px solid var(--line);}
+.ans-box .ab{flex:1;}
+/* 横线样式（item 4）：在作答区内画等距横线，间距由 --lg 控制（item 5） */
+.ans-box .ab.lined{
+  background-image:repeating-linear-gradient(to bottom,
+    transparent 0,
+    transparent calc(var(--lg,8mm) - 1px),
+    #cdd5df calc(var(--lg,8mm) - 1px),
+    #cdd5df var(--lg,8mm));
+}
+
+/* 自定义（边框由外层 .blk 统一提供） */
+.custom-box{border:none;border-radius:4px;padding:0;break-inside:avoid;}
+.custom-box .ch{font-size:14px;font-weight:800;margin-bottom:4px;}
+.custom-box .cb{font-size:14px;line-height:1.7;white-space:pre-wrap;min-height:20px;}
+
+/* 打印 */
+@media print{
+  @page{margin:0;}
+  body{background:#fff;}
+  .topbar,.left,.right{display:none !important;}
+  .app{display:block;height:auto;}
+  .center{overflow:visible;background:#fff;padding:0;}
+  .stage-wrap{padding:0;}
+  .stage{padding:0;}
+  .sheet{box-shadow:none;width:auto;padding:0;}
+  /* 每面固定尺寸卡片 => 每页打印一张，自动双面顺序（item 2） */
+  .page{box-shadow:none;margin:0;break-after:page;page-break-after:always;}
+  .blk,.ans-box,.custom-box,.info-box{break-inside:avoid;}
+}

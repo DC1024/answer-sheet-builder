@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>答题卡制作器</title>
+<link rel="stylesheet" href="assets/css/style.css">
+<style id="page-css"></style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">📝 答题卡制作器</div>
+  <div class="tools">
+    <label>纸张
+      <select id="paper-size">
+        <option value="A3">A3</option>
+        <option value="A4">A4</option>
+      </select>
+    </label>
+    <label>方向
+      <select id="paper-orient">
+        <option value="portrait">竖版</option>
+        <option value="landscape">横版</option>
+      </select>
+    </label>
+    <button id="btn-print" class="primary">🖨 打印 / 导出 PDF</button>
+    <button id="btn-save">💾 保存</button>
+    <button id="btn-load">📂 载入</button>
+    <button id="btn-export">⬇ 导出 JSON</button>
+    <button id="btn-import">⬆ 导入 JSON</button>
+    <button id="btn-reset">♻ 重置</button>
+    <input type="file" id="file-import" accept="application/json" hidden>
+  </div>
+</header>
+
+<main class="app">
+  <!-- 左栏：题型面板 + 结构列表 -->
+  <aside class="left">
+    <section class="panel">
+      <h3>① 添加题型</h3>
+      <div id="palette" class="palette"></div>
+    </section>
+    <section class="panel grow">
+      <h3>② 答题卡结构（可拖拽排序）</h3>
+      <div id="structure" class="structure"></div>
+    </section>
+  </aside>
+
+  <!-- 中栏：预览 -->
+  <section class="center">
+    <div class="stage-wrap">
+      <div id="stage" class="stage">
+        <div id="sheet" class="sheet"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 右栏：属性 -->
+  <aside class="right">
+    <section class="panel grow">
+      <h3>③ 属性设置</h3>
+      <div id="props" class="props">
+        <p class="hint">在左侧选择一个模块进行设置。</p>
+      </div>
+    </section>
+  </aside>
+</main>
+
+<script type="module" src="assets/js/app.js"></script>
+</body>
+</html>

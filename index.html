@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>答题卡制作器 · Answer Sheet Builder</title>
+<meta name="description" content="可视化制作考试答题卡的纯前端工具：模块化题型、固定纸张分页、一键打印导出 PDF。A pure front-end tool to build exam answer sheets.">
+<style>
+  :root{
+    --blue:#2b6cb0; --blue-d:#1e4f86; --blue-l:#eaf2fb;
+    --ink:#1a2230; --muted:#5b6b7f; --line:#dfe6ee;
+    --bg:#f6f9fc; --card:#ffffff;
+    --ok:#1f9d63;
+    --radius:14px;
+    --shadow:0 10px 30px rgba(20,50,90,.10);
+    --shadow-s:0 4px 14px rgba(20,50,90,.08);
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html{scroll-behavior:smooth;}
+  body{
+    font-family:"Segoe UI","Microsoft YaHei","PingFang SC",system-ui,-apple-system,sans-serif;
+    color:var(--ink); background:var(--bg); line-height:1.65;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--blue);text-decoration:none;}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 22px;}
+
+  /* ---------- nav ---------- */
+  header.nav{
+    position:sticky;top:0;z-index:50;backdrop-filter:saturate(1.4) blur(8px);
+    background:rgba(255,255,255,.86);border-bottom:1px solid var(--line);
+  }
+  .nav-in{display:flex;align-items:center;gap:18px;height:62px;}
+  .logo{display:flex;align-items:center;gap:9px;font-weight:800;font-size:17px;letter-spacing:.2px;}
+  .logo .dot{
+    width:26px;height:26px;border-radius:7px;flex:0 0 auto;
+    background:linear-gradient(135deg,#3b82f6,#1e4f86);
+    display:grid;place-items:center;color:#fff;font-size:14px;
+  }
+  .nav nav{display:flex;gap:20px;margin-left:8px;font-size:14px;}
+  .nav nav a{color:var(--muted);font-weight:600;}
+  .nav nav a:hover{color:var(--blue);}
+  .nav .spacer{flex:1;}
+  .lang{
+    border:1px solid var(--line);background:#fff;border-radius:999px;
+    padding:5px 12px;font-size:13px;font-weight:700;cursor:pointer;color:var(--ink);
+  }
+  .lang:hover{border-color:var(--blue);color:var(--blue);}
+  .btn{
+    display:inline-flex;align-items:center;gap:7px;border-radius:10px;
+    padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer;border:1px solid transparent;
+    transition:transform .06s ease, box-shadow .2s ease, background .2s;
+  }
+  .btn:active{transform:translateY(1px);}
+  .btn-primary{background:var(--blue);color:#fff;box-shadow:var(--shadow-s);}
+  .btn-primary:hover{background:var(--blue-d);}
+  .btn-ghost{background:#fff;border-color:var(--line);color:var(--ink);}
+  .btn-ghost:hover{border-color:var(--blue);color:var(--blue);}
+
+  /* ---------- hero ---------- */
+  .hero{padding:64px 0 40px;}
+  .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:44px;align-items:center;}
+  .badge{
+    display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:700;
+    color:var(--blue-d);background:var(--blue-l);border:1px solid #cfe2f5;
+    padding:5px 11px;border-radius:999px;margin-bottom:16px;
+  }
+  .badge .pulse{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px rgba(31,157,99,.18);}
+  h1{font-size:40px;line-height:1.18;letter-spacing:-.5px;font-weight:800;}
+  h1 .grad{background:linear-gradient(120deg,#3b82f6,#1e4f86);-webkit-background-clip:text;background-clip:text;color:transparent;}
+  .sub{margin-top:16px;font-size:16.5px;color:var(--muted);max-width:520px;}
+  .cta{display:flex;flex-wrap:wrap;gap:12px;margin-top:26px;}
+  .meta{margin-top:18px;display:flex;flex-wrap:wrap;gap:8px 16px;font-size:13px;color:var(--muted);}
+  .meta span{display:inline-flex;align-items:center;gap:6px;}
+  .meta i{width:6px;height:6px;border-radius:50%;background:#9db4cc;display:inline-block;}
+
+  /* ---------- mockup ---------- */
+  .mock{
+    background:#fff;border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:16px;transform:perspective(1200px) rotateY(-6deg) rotateX(2deg);
+  }
+  .mock .paper{border:1.5px solid #1a1a1a;border-radius:5px;padding:11px;background:#fff;}
+  .mock .m-title{text-align:center;font-weight:800;letter-spacing:4px;font-size:13px;border-bottom:1.5px solid #1a1a1a;padding-bottom:6px;margin-bottom:9px;}
+  .mock .m-row{display:flex;gap:14px;font-size:11px;color:#334;margin-bottom:7px;}
+  .mock .m-row b{font-weight:800;}
+  .mock .m-blk{border:1.5px solid #1a1a1a;border-radius:4px;padding:7px 9px;margin-bottom:9px;}
+  .mock .m-h{font-weight:800;font-size:11.5px;border-left:4px solid var(--blue);padding-left:6px;margin-bottom:6px;}
+  .mock .m-opts{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:10.5px;}
+  .mock .op{display:inline-flex;align-items:center;gap:3px;}
+  .mock .br{display:inline-grid;place-items:center;width:14px;height:14px;border:1.4px solid #333;font-size:9px;}
+  .mock .m-fill{font-size:10.5px;display:flex;align-items:center;gap:6px;margin:5px 0;}
+  .mock .blank{display:inline-block;width:60px;border-bottom:1.4px solid #1a1a1a;height:10px;}
+  .mock .ansbox{border:1.5px solid #1a1a1a;border-radius:4px;height:86px;padding:5px 8px;}
+  .mock .ansbox .ln{height:0;border-top:1px solid #cdd5df;margin-top:13px;}
+
+  /* ---------- sections ---------- */
+  section{padding:56px 0;}
+  .sec-head{text-align:center;margin-bottom:38px;}
+  .sec-head h2{font-size:28px;font-weight:800;letter-spacing:-.3px;}
+  .sec-head p{color:var(--muted);margin-top:10px;font-size:15px;}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;}
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:20px;box-shadow:var(--shadow-s);transition:transform .12s ease, box-shadow .2s;
+  }
+  .card:hover{transform:translateY(-3px);box-shadow:var(--shadow);}
+  .card .ic{
+    width:40px;height:40px;border-radius:11px;display:grid;place-items:center;font-size:19px;
+    background:var(--blue-l);border:1px solid #cfe2f5;margin-bottom:13px;
+  }
+  .card h3{font-size:16px;margin-bottom:7px;}
+  .card p{font-size:13.8px;color:var(--muted);}
+
+  /* quickstart */
+  .quick{background:linear-gradient(180deg,#f0f6fd,#f6f9fc);border-top:1px solid var(--line);border-bottom:1px solid var(--line);}
+  .code{
+    background:#0f1b2d;color:#d8e6f5;border-radius:12px;padding:16px 18px;overflow:auto;
+    font-family:"JetBrains Mono","Cascadia Code",Consolas,monospace;font-size:13px;line-height:1.7;
+    box-shadow:var(--shadow-s);
+  }
+  .code .c{color:#6f88a6;}
+  .code .k{color:#7ee0b0;}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:8px;}
+  .two h4{font-size:14px;margin-bottom:9px;color:var(--ink);}
+
+  /* steps */
+  .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;counter-reset:s;}
+  .step{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px;box-shadow:var(--shadow-s);}
+  .step .n{width:26px;height:26px;border-radius:50%;background:var(--blue);color:#fff;display:grid;place-items:center;font-size:13px;font-weight:800;margin-bottom:10px;}
+  .step h4{font-size:14px;margin-bottom:5px;}
+  .step p{font-size:13px;color:var(--muted);}
+
+  footer{border-top:1px solid var(--line);background:#fff;padding:30px 0;color:var(--muted);font-size:13.5px;}
+  .foot-in{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;}
+
+  @media(max-width:900px){
+    .hero-grid{grid-template-columns:1fr;gap:30px;}
+    .grid{grid-template-columns:1fr 1fr;}
+    .steps{grid-template-columns:1fr 1fr;}
+    .two{grid-template-columns:1fr;}
+    .nav nav{display:none;}
+    h1{font-size:32px;}
+    .mock{transform:none;}
+  }
+  @media(max-width:560px){ .grid{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-in">
+    <div class="logo"><span class="dot">📝</span><span>答题卡制作器</span></div>
+    <nav>
+      <a href="#features" data-zh="功能" data-en="Features">功能</a>
+      <a href="#how" data-zh="使用" data-en="How it works">使用</a>
+      <a href="#deploy" data-zh="部署" data-en="Deploy">部署</a>
+      <a href="README.md" data-zh="文档" data-en="Docs">文档</a>
+      <a href="https://github.com/DC1024/answer-sheet-builder" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+    <span class="spacer"></span>
+    <button class="lang" id="langBtn">EN</button>
+    <a class="btn btn-primary" href="app.html" data-zh="▶ 在线试用" data-en="▶ Live Demo">▶ 在线试用</a>
+  </div>
+</header>
+
+<main>
+  <!-- Hero -->
+  <div class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <span class="badge"><span class="pulse"></span><span data-zh="v1.0.0 已发布 · 完全免费开源" data-en="v1.0.0 released · Free &amp; open source">v1.0.0 已发布 · 完全免费开源</span></span>
+        <h1>
+          <span data-zh="像搭积木一样，" data-en="Build exam answer sheets">像搭积木一样，</span><br>
+          <span class="grad" data-zh="制作考试答题卡" data-en="like stacking blocks">制作考试答题卡</span>
+        </h1>
+        <p class="sub" data-zh="纯前端可视化工具：模块化组合选择题、填空题、解答题；纸张固定分页、一键打印导出 PDF。无需后端、无需注册、数据不出本机。"
+           data-en="A pure front-end visual tool: compose choice, fill-in-the-blank and free-response questions as modules; fixed-size pagination; print / export to PDF in one click. No backend, no sign-up, your data never leaves your machine.">
+          纯前端可视化工具：模块化组合选择题、填空题、解答题；纸张固定分页、一键打印导出 PDF。无需后端、无需注册、数据不出本机。
+        </p>
+        <div class="cta">
+          <a class="btn btn-primary" href="app.html" data-zh="▶ 立即开始制作" data-en="▶ Start building">▶ 立即开始制作</a>
+          <a class="btn btn-ghost" href="https://github.com/DC1024/answer-sheet-builder" target="_blank" rel="noopener">★ GitHub</a>
+        </div>
+        <div class="meta">
+          <span><i></i><span data-zh="A3 / A4 · 竖版/横版" data-en="A3 / A4 · portrait/landscape">A3 / A4 · 竖版/横版</span></span>
+          <span><i></i><span data-zh="Docker 一键部署" data-en="One-command Docker deploy">Docker 一键部署</span></span>
+          <span><i></i><span data-zh="导出 JSON 模板" data-en="JSON template export">导出 JSON 模板</span></span>
+        </div>
+      </div>
+
+      <div class="mock" aria-hidden="true">
+        <div class="paper">
+          <div class="m-title" data-zh="考 生 信 息" data-en="STUDENT INFO">考 生 信 息</div>
+          <div class="m-row"><span><b data-zh="班级" data-en="Class">班级</b> ______</span><span><b data-zh="姓名" data-en="Name">姓名</b> ______</span><span><b data-zh="考号" data-en="No.">考号</b> ________</span></div>
+          <div class="m-blk">
+            <div class="m-h" data-zh="一、选择题" data-en="I. Multiple Choice">一、选择题</div>
+            <div class="m-opts">
+              <span class="op">1. <span class="br">A</span><span class="br">B</span><span class="br">C</span><span class="br">D</span></span>
+              <span class="op">2. <span class="br">A</span><span class="br">B</span><span class="br">C</span><span class="br">D</span></span>
+              <span class="op">3. <span class="br">A</span><span class="br">B</span><span class="br">C</span><span class="br">D</span></span>
+            </div>
+          </div>
+          <div class="m-blk">
+            <div class="m-h" data-zh="二、填空题" data-en="II. Fill in the Blanks">二、填空题</div>
+            <div class="m-fill">11.（1）<span class="blank"></span><span class="blank"></span></div>
+            <div class="m-fill">（2）① <span class="blank"></span></div>
+          </div>
+          <div class="m-blk" style="margin-bottom:0">
+            <div class="m-h" data-zh="三、解答题" data-en="III. Free Response">三、解答题</div>
+            <div class="ansbox"><div class="ln"></div><div class="ln"></div><div class="ln"></div><div class="ln"></div><div class="ln"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Features -->
+  <section id="features">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2 data-zh="为真实考试而生" data-en="Built for real exams">为真实考试而生</h2>
+        <p data-zh="覆盖从单选题到解答题的完整题型，排版细节都可控。" data-en="From single choice to free response — every layout detail is under control.">覆盖从单选题到解答题的完整题型，排版细节都可控。</p>
+      </div>
+      <div class="grid">
+        <div class="card">
+          <div class="ic">🧩</div>
+          <h3 data-zh="模块化题型" data-en="Modular question types">模块化题型</h3>
+          <p data-zh="选择题 / 填空题 / 解答题 / 考生信息 / 自定义区均为独立模块，可自由添加、复制、拖拽排序。" data-en="Choice, fill-in-the-blank, free-response, student info and custom blocks are independent modules — add, duplicate and drag to reorder freely.">选择题 / 填空题 / 解答题 / 考生信息 / 自定义区均为独立模块，可自由添加、复制、拖拽排序。</p>
+        </div>
+        <div class="card">
+          <div class="ic">📄</div>
+          <h3 data-zh="固定纸张分页" data-en="Fixed-size pagination">固定纸张分页</h3>
+          <p data-zh="纸张尺寸不随内容变化；内容自动按“第一面 → 第二面 → 第二页第一面”顺序填充，A3 每面双栏。" data-en="Paper size stays fixed; content auto-flows face by face (front → back → next page), with two columns per A3 face.">纸张尺寸不随内容变化；内容自动按“第一面 → 第二面 → 第二页第一面”顺序填充，A3 每面双栏。</p>
+        </div>
+        <div class="card">
+          <div class="ic">🔤</div>
+          <h3 data-zh="填涂 / 手写双样式" data-en="Bubble or handwritten">填涂 / 手写双样式</h3>
+          <p data-zh="选择题支持中括号 [A] 填涂与横线手写两种作答样式，一行题数自动适配纸张宽度，绝不溢出。" data-en="Choice questions support bracket [A] bubbling or handwritten lines; columns auto-fit the paper width so nothing overflows.">选择题支持中括号 [A] 填涂与横线手写两种作答样式，一行题数自动适配纸张宽度，绝不溢出。</p>
+        </div>
+        <div class="card">
+          <div class="ic">✎</div>
+          <h3 data-zh="多级填空" data-en="Nested sub-questions">多级填空</h3>
+          <p data-zh="支持 11（1）、11（2）①/② 这类多级小题；每个空长度、每题行间距均可调。" data-en="Supports nested items like 11(1), 11(2)①/②; each blank length and per-question spacing is adjustable.">支持 11（1）、11（2）①/② 这类多级小题；每个空长度、每题行间距均可调。</p>
+        </div>
+        <div class="card">
+          <div class="ic">📐</div>
+          <h3 data-zh="解答题横线" data-en="Ruled answer areas">解答题横线</h3>
+          <p data-zh="解答题可选择空白大框或等距横线样式，横线间距可调，作答区高度按需设置。" data-en="Free-response areas can be blank or ruled with equal spacing; line gap and box height are configurable.">解答题可选择空白大框或等距横线样式，横线间距可调，作答区高度按需设置。</p>
+        </div>
+        <div class="card">
+          <div class="ic">🖨</div>
+          <h3 data-zh="一键打印 / PDF" data-en="Print / PDF in one click">一键打印 / PDF</h3>
+          <p data-zh="浏览器直接打印或另存 PDF；支持双面长边翻转，模板可导出为 JSON 复用。" data-en="Print directly or save as PDF; supports duplex flip; templates export to JSON for reuse.">浏览器直接打印或另存 PDF；支持双面长边翻转，模板可导出为 JSON 复用。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How -->
+  <section id="how" style="background:#fff;border-top:1px solid var(--line);border-bottom:1px solid var(--line);">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2 data-zh="四步出一张答题卡" data-en="Four steps to an answer sheet">四步出一张答题卡</h2>
+        <p data-zh="全程可视化，所见即所得。" data-en="Fully visual, WYSIWYG.">全程可视化，所见即所得。</p>
+      </div>
+      <div class="steps">
+        <div class="step"><div class="n">1</div><h4 data-zh="添加题型" data-en="Add blocks">添加题型</h4><p data-zh="从左侧面板点选需要的题型。" data-en="Pick the question types you need from the left panel.">从左侧面板点选需要的题型。</p></div>
+        <div class="step"><div class="n">2</div><h4 data-zh="拖拽排序" data-en="Reorder">拖拽排序</h4><p data-zh="拖动结构列表调整题目顺序。" data-en="Drag the list to reorder questions.">拖动结构列表调整题目顺序。</p></div>
+        <div class="step"><div class="n">3</div><h4 data-zh="配置属性" data-en="Configure">配置属性</h4><p data-zh="题数、样式、空格、字号、对齐。" data-en="Count, style, blanks, font size, alignment.">题数、样式、空格、字号、对齐。</p></div>
+        <div class="step"><div class="n">4</div><h4 data-zh="打印导出" data-en="Print &amp; export">打印导出</h4><p data-zh="选纸张与双面，打印或存 PDF。" data-en="Choose paper &amp; duplex, then print or save PDF.">选纸张与双面，打印或存 PDF。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Deploy -->
+  <section id="deploy" class="quick">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2 data-zh="部署方式" data-en="Deployment">部署方式</h2>
+        <p data-zh="纯静态站点，Docker 或任意 HTTP 服务器均可。" data-en="A pure static site — run it with Docker or any HTTP server.">纯静态站点，Docker 或任意 HTTP 服务器均可。</p>
+      </div>
+      <div class="two">
+        <div>
+          <h4>🐳 Docker</h4>
+          <pre class="code"><span class="c"># 构建并运行</span>
+docker build -t answer-sheet-builder .
+docker run -d --name asb -p 8080:80 \
+  answer-sheet-builder
+
+<span class="c"># 或使用 compose</span>
+docker compose up -d</pre>
+        </div>
+        <div>
+          <h4 data-zh="💻 本地 / 任意服务器" data-en="💻 Local / any server">💻 本地 / 任意服务器</h4>
+          <pre class="code"><span class="c"># 纯静态，任选一种</span>
+python3 -m http.server 8080
+<span class="c"># 浏览器打开</span>
+http://localhost:8080/app.html</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot-in">
+    <div>© 2026 DC · <span data-zh="答题卡制作器" data-en="Answer Sheet Builder">答题卡制作器</span> · <span data-zh="MIT 许可" data-en="MIT License">MIT 许可</span></div>
+    <div>
+      <a href="app.html" data-zh="在线试用" data-en="Live Demo">在线试用</a> ·
+      <a href="README.md" data-zh="中文文档" data-en="中文文档">中文文档</a> ·
+      <a href="README_EN.md">English</a> ·
+      <a href="https://github.com/DC1024/answer-sheet-builder" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var btn = document.getElementById('langBtn');
+  var zh = true;
+  function apply(){
+    document.documentElement.lang = zh ? 'zh-CN' : 'en';
+    document.querySelectorAll('[data-zh]').forEach(function(el){
+      var v = zh ? el.getAttribute('data-zh') : el.getAttribute('data-en');
+      if (v != null) el.textContent = v;
+    });
+    btn.textContent = zh ? 'EN' : '中文';
+    document.title = zh ? '答题卡制作器 · Answer Sheet Builder' : 'Answer Sheet Builder · 答题卡制作器';
+  }
+  btn.addEventListener('click', function(){ zh = !zh; apply(); });
+  apply();
+})();
+</script>
+</body>
+</html>
