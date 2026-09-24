@@ -61,10 +61,11 @@ export default {
 
     const renderList = () => {
       const cur = Math.min(ansTargetFor(block && block.id), config.questions.length - 1);
+      const startNo = Math.max(1, +config.startNo || 1);
       list.innerHTML = config.questions.map((q, i) => `
         <div class="qcard${i === cur ? ' on' : ''}">
           <div class="qrow">
-            <span>第 ${i + 1} 题${i === cur ? ' <em class="qcur">当前</em>' : ''}</span>
+            <span>第 ${startNo + i} 题${i === cur ? ' <em class="qcur">当前</em>' : ''}</span>
             <label style="margin:0;">作答区高度(mm)
               <input type="number" min="40" max="400" data-i="${i}" data-f="h" value="${q.h}">
             </label>

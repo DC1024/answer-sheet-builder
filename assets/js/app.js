@@ -301,6 +301,19 @@ function renderProps(){
 }
 
 /* ---------- 题型面板 ---------- */
+// 新增带题号的题型时，起始题号自动接续已有题目（选择题 count + 填空/解答 questions 数）
+function nextStartNo(){
+  let n = 0;
+  store.blocks.forEach(b => {
+    const c = b.config || {};
+    if (b.type === 'singleChoice') n += Math.max(0, Math.min(80, +c.count || 0));
+    else if (b.type === 'fillBlank' || b.type === 'answer'){
+      n += Array.isArray(c.questions) ? c.questions.length : 0;
+    }
+  });
+  return n + 1;
+}
+
 function renderPalette(){
   const wrap = document.getElementById('palette');
   wrap.innerHTML = '';
@@ -308,7 +321,11 @@ function renderPalette(){
     const btn = document.createElement('button');
     btn.className = 'pbtn';
     btn.innerHTML = `<span class="ic">${mod.icon}</span><span>${mod.name}</span>`;
-    btn.addEventListener('click', () => store.addBlock(mod.type, mod.defaults()));
+    btn.addEventListener('click', () => {
+      const cfg = mod.defaults();
+      if (cfg && typeof cfg === 'object' && 'startNo' in cfg) cfg.startNo = nextStartNo();
+      store.addBlock(mod.type, cfg);
+    });
     wrap.appendChild(btn);
   });
 }
@@ -388,25 +405,35 @@ function bindResizers(){
 /* ---------- 预览内点选 / 悬停作答区 → 决定「当前题」（Ctrl+V 贴图的目标） ---------- */
 // 与拖动把手一样走 #sheet 的事件委托：作答区每次重渲染都会重建。
 // 只改运行期的 ui 状态，不写进 config，不产生撤销点。
+// 注意：整个作答盒（含题号行 .ah 和边框）都算点击/悬停目标 —— 不止中间空白区。
+function abFromEvent(e){
+  const box = e.target.closest && e.target.closest('.ans-box');
+  if (!box) return null;
+  const ab = box.querySelector('.ab[data-blk]');
+  return ab || null;
+}
+
 function bindAnswerTarget(){
   const sheet = document.getElementById('sheet');
 
   sheet.addEventListener('pointerover', e => {
-    const ab = e.target.closest && e.target.closest('.ab[data-blk]');
+    const ab = abFromEvent(e);
     if (!ab) return;
     setAnsTarget(ab.dataset.blk, parseInt(ab.dataset.qi, 10) || 0);
   });
 
   sheet.addEventListener('click', e => {
     if (e.target.closest && e.target.closest('.rz-grip')) return;   // 拖高度不算点选
-    const ab = e.target.closest && e.target.closest('.ab[data-blk]');
+    const ab = abFromEvent(e);
     if (!ab) return;
     const id = ab.dataset.blk;
     const qi = parseInt(ab.dataset.qi, 10) || 0;
     setAnsTarget(id, qi);
     if (store.selectedId !== id){ store.selectedId = id; }
     store.emit();                    // 触发 fullRender → 属性面板高亮 + 预览区 .ab.on
-    toast(`已选中第 ${qi + 1} 题作答区（Ctrl+V 可贴图）`);
+    const b = store.getBlock(id);
+    const no = b ? Math.max(1, +b.config.startNo || 1) + qi : qi + 1;
+    toast(`已选中第 ${no} 题作答区（Ctrl+V 可贴图）`);
   });
 }
 

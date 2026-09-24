@@ -89,6 +89,12 @@ button:disabled:hover{background:#f3f5f8;}
   font-style:normal;font-size:11px;color:#fff;background:#2b6cb0;
   border-radius:8px;padding:0 6px;margin-left:4px;
 }
+/* 题卡行内不换行：标签（含「当前」角标）整块排，放不下时整块掉到下一行，
+   不会出现「第 1 题 / 当前」被拆成两行的错位 */
+.qcard .qrow{flex-wrap:wrap;row-gap:4px;}
+.qcard .qrow > span{white-space:nowrap;display:inline-flex;align-items:center;flex:0 0 auto;}
+.qcard .qrow label{white-space:nowrap;margin:0;}
+.qcard .qrow input[type=number]{width:70px;}
 .qcard .qrow span{min-width:auto;}
 .qcard input[type=file]{width:100%;font-size:12px;}
 .img-thumb{margin-top:4px;border:1px solid #e6eaef;border-radius:6px;padding:4px;background:#fafcfe;text-align:center;}
