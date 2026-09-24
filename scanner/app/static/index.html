@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>答题卡扫描识别 · Answer Sheet Scanner</title>
+<style>
+:root{--bg:#f5f7fa;--card:#fff;--line:#e3e8ef;--fg:#2b3440;--mut:#7b8794;--pri:#2b6cb0;--ok:#2f9e44;--warn:#e8a33d;--err:#d64545;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
+header{background:#fff;border-bottom:1px solid var(--line);padding:12px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+header h1{font-size:17px;margin:0;font-weight:700;}
+header .sub{color:var(--mut);font-size:12px;}
+.wrap{max-width:1180px;margin:0 auto;padding:18px;}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:16px;}
+.card h2{font-size:14px;margin:0 0 10px;display:flex;align-items:center;gap:8px;}
+.card h2 .tag{font-size:11px;color:var(--mut);font-weight:400;}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0;}
+button{background:var(--pri);color:#fff;border:0;border-radius:6px;padding:7px 14px;font-size:13px;cursor:pointer;}
+button.ghost{background:#fff;color:var(--pri);border:1px solid #cfe0f3;}
+button:disabled{opacity:.5;cursor:not-allowed;}
+input[type=file]{font-size:13px;}
+label.f{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#4a5568;}
+input[type=number],input[type=text],textarea{border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-size:13px;font-family:inherit;}
+input[type=number]{width:74px;}
+textarea{width:100%;min-height:64px;}
+.hint{font-size:12px;color:var(--mut);}
+table{border-collapse:collapse;width:100%;font-size:13px;}
+th,td{border:1px solid var(--line);padding:5px 8px;text-align:left;}
+th{background:#f7fafc;font-weight:600;}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+.sheet{border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:12px;background:#fff;}
+.sheet .hd{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;}
+.sheet img{max-width:420px;width:100%;border:1px solid var(--line);border-radius:6px;background:#fff;}
+.badge{font-size:11px;border-radius:10px;padding:1px 8px;border:1px solid var(--line);color:var(--mut);}
+.badge.ok{color:var(--ok);border-color:#b7e4c7;background:#ebfbee;}
+.badge.warn{color:var(--warn);border-color:#f3d9a4;background:#fff9db;}
+.badge.err{color:var(--err);border-color:#f5c2c2;background:#fff5f5;}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;}
+@media(max-width:860px){.grid2{grid-template-columns:1fr;}}
+.bar{height:8px;background:#eef2f7;border-radius:4px;overflow:hidden;min-width:60px;}
+.bar i{display:block;height:100%;background:var(--pri);}
+.empty{color:var(--mut);font-size:13px;padding:8px 0;}
+#toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,10px);background:#2b3440;color:#fff;padding:8px 16px;border-radius:20px;font-size:13px;opacity:0;pointer-events:none;transition:.18s;}
+#toast.on{opacity:1;transform:translate(-50%,0);}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎯 答题卡扫描识别</h1>
+  <span class="sub">阅卷模板定位 + OpenCV 填涂识别 · 纯本地、无模型下载、可离线</span>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <h2>① 阅卷模板 <span class="tag">答题卡生成器 →「🎯 阅卷模板」导出</span></h2>
+    <div class="row">
+      <input type="file" id="tplFile" accept="application/json,.json">
+      <button id="btnTpl">上传模板</button>
+      <span class="hint" id="tplInfo">尚未上传模板</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>② 扫描图 <span class="tag">扫描仪 300dpi 或手机拍照均可，多张一次上传</span></h2>
+    <div class="row">
+      <input type="file" id="imgFiles" accept="image/*" multiple>
+      <button id="btnScan">开始识别</button>
+    </div>
+    <div class="row">
+      <label class="f">面序号 <input type="number" id="pageIdx" value="0" min="0" max="9"></label>
+      <label class="f">采样精度(px/mm) <input type="number" id="pxPerMm" value="8" min="3" max="20" step="1"></label>
+      <label class="f">填涂阈值 <input type="number" id="fillMin" value="0.5" min="0.2" max="0.9" step="0.05"></label>
+      <label class="f">区分间距 <input type="number" id="gap" value="0.15" min="0.02" max="0.5" step="0.01"></label>
+      <span class="hint">阈值越低越容易判为已涂；浅涂/多选会自动打「存疑」标记</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>③ 识别结果</h2>
+    <div id="results"><div class="empty">还没有识别结果</div></div>
+  </div>
+
+  <div class="card">
+    <h2>④ 汇总统计 <span class="tag">填标准答案可得正确率与得分</span></h2>
+    <div class="row">
+      <textarea id="key" placeholder="标准答案，例如：1A 2C 3B 4D …（也可只填字母序列 A C B D，按题号顺序）"></textarea>
+    </div>
+    <div class="row">
+      <button id="btnStats" class="ghost">生成统计</button>
+      <button id="btnCsv" class="ghost">导出 CSV</button>
+      <span class="hint" id="statsInfo"></span>
+    </div>
+    <div class="grid2">
+      <div><h3 style="font-size:13px;margin:10px 0 6px;">每题分布 / 正确率</h3><div id="qstats"><div class="empty">—</div></div></div>
+      <div><h3 style="font-size:13px;margin:10px 0 6px;">个人得分</h3><div id="sstats"><div class="empty">—</div></div></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+<script>
+const $ = s => document.querySelector(s);
+let toastT = null;
+function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('on'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('on'),1800); }
+const flagText = {ok:'已选', multi:'多选/难分', faint:'浅涂', blank:'未填'};
+const flagCls = {ok:'ok', multi:'warn', faint:'warn', blank:'err'};
+
+$('#btnTpl').onclick = async () => {
+  const f = $('#tplFile').files[0];
+  if (!f) return toast('先选择模板文件');
+  const fd = new FormData(); fd.append('file', f);
+  const r = await (await fetch('/api/template', {method:'POST', body:fd})).json();
+  if (r.error) { toast(r.error); return; }
+  const s = r.summary, p = s.paper;
+  $('#tplInfo').textContent = `${p.size} ${p.orientation} · ${p.w}×${p.h}mm · ${s.pages.length} 面 · 共 ${s.questionCount} 题 · 定位点 ${s.marks.style} ${s.marks.size}mm`;
+  toast('模板已载入：' + s.questionCount + ' 题');
+};
+
+$('#btnScan').onclick = async () => {
+  const files = $('#imgFiles').files;
+  if (!files.length) return toast('先选择扫描图');
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f);
+  fd.append('page', $('#pageIdx').value);
+  fd.append('pxPerMm', $('#pxPerMm').value);
+  fd.append('fillMin', $('#fillMin').value);
+  fd.append('gap', $('#gap').value);
+  $('#results').innerHTML = '<div class="empty">识别中…</div>';
+  const r = await (await fetch('/api/scan', {method:'POST', body:fd})).json();
+  renderResults(r.results || []);
+};
+
+function renderResults(list){
+  const box = $('#results');
+  if (!list.length){ box.innerHTML = '<div class="empty">没有结果</div>'; return; }
+  box.innerHTML = '';
+  for (const r of list){
+    const d = document.createElement('div');
+    d.className = 'sheet';
+    if (!r.ok){ d.innerHTML = `<div class="hd"><b>${esc(r.name)}</b><span class="badge err">失败</span></div><div class="hint">${esc(r.error)}</div>`; box.appendChild(d); continue; }
+    const bad = r.questions.filter(q => q.flag !== 'ok').length;
+    const rows = r.questions.map(q => {
+      const cells = q.ratios ? Object.keys(q.ratios).sort().map(k =>
+        `<td class="num" title="${k}">${(q.ratios[k]*100).toFixed(0)}%</td>`).join('') : '';
+      const head = q.ratios ? Object.keys(q.ratios).sort().map(k => `<th class="num">${k}</th>`).join('') : '';
+      return {q, cells, head};
+    });
+    const head = rows[0] ? rows[0].head : '';
+    d.innerHTML = `
+      <div class="hd">
+        <div><b>${esc(r.name)}</b> <span class="badge ${bad?'warn':'ok'}">${r.questions.length} 题 · ${bad?bad+' 题存疑':'全部确定'}</span></div>
+        <span class="hint">面 ${r.page} · ${r.pxPerMm}px/mm</span>
+      </div>
+      <div class="grid2">
+        <div><img src="/api/overlay/${r.id}.png" alt="校对图"></div>
+        <div style="max-height:420px;overflow:auto;">
+          <table><thead><tr><th>题号</th><th>答案</th><th>判定</th>${head}</tr></thead><tbody>
+          ${rows.map(x => `<tr><td>${x.q.no}</td><td><b>${x.q.answer||'—'}</b></td>
+            <td><span class="badge ${flagCls[x.q.flag]||''}">${flagText[x.q.flag]||x.q.flag}</span></td>${x.cells}</tr>`).join('')}
+          </tbody></table>
+        </div>
+      </div>`;
+    box.appendChild(d);
+  }
+}
+
+$('#btnStats').onclick = async () => {
+  const r = await (await fetch('/api/stats', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({key: $('#key').value})})).json();
+  if (r.error){ toast(r.error); return; }
+  $('#statsInfo').textContent = `${r.sheetCount} 份 · ${r.questions.length} 题` + (r.hasKey ? ' · 已按标准答案判分' : ' · 未填标准答案（仅统计分布）');
+  $('#qstats').innerHTML = `<table><thead><tr><th>题号</th><th>答案</th>${r.hasKey?'<th class="num">正确率</th><th class="num">正确</th>':''}<th>分布</th><th class="num">未填</th><th class="num">存疑</th></tr></thead><tbody>
+    ${r.questions.map(q => {
+      const total = Math.max(1, q.answered + q.blank);
+      const dist = Object.keys(q.dist).map(k => `${k}:${q.dist[k]}`).join(' ') || '—';
+      const bar = r.hasKey ? `<div class="bar" title="${q.rate}%"><i style="width:${q.rate||0}%"></i></div>` : '';
+      return `<tr><td>${q.no}</td><td>${q.key||'—'}</td>${r.hasKey?`<td class="num">${q.rate}%</td><td class="num">${q.correct}</td>`:''}<td>${dist}</td><td class="num">${q.blank}</td><td class="num">${q.doubt}</td></tr>`;
+    }).join('')}</tbody></table>`;
+  $('#sstats').innerHTML = `<table><thead><tr><th>文件</th><th class="num">得分</th><th class="num">未填</th><th class="num">存疑</th><th>错题</th></tr></thead><tbody>
+    ${r.sheets.map(s => `<tr><td>${esc(s.name)}</td><td class="num">${s.score}${r.hasKey?`/${s.total}`:''}</td><td class="num">${s.blank}</td><td class="num">${s.doubt}</td>
+      <td>${s.wrong.map(w=>`${w.no}(${w.chose}→${w.key})`).join(' ') || '—'}</td></tr>`).join('')}</tbody></table>`;
+};
+
+$('#btnCsv').onclick = () => {
+  const fd = new FormData(); fd.append('key', $('#key').value);
+  fetch('/api/export.csv', {method:'POST', body:fd}).then(r => r.blob()).then(b => {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'omr-answers.csv'; a.click();
+  });
+};
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+</script>
+</body>
+</html>

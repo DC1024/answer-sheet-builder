@@ -111,7 +111,7 @@ docker run -d --name asb -p 8080:80 ghcr.io/dc1024/answer-sheet-builder:latest
 ## 配套：扫描识别服务（自动阅卷）
 
 排好卷子只是上半场 —— 学生作答、收卷之后，`🎯 阅卷模板` 能把这份卷子变成机器可读的坐标文件，
-交给配套的 **[answer-sheet-scanner](../answer-sheet-scanner)** 服务自动识读选择题并出班级统计。
+交给本仓库自带的 **[scanner/](scanner/)** 服务自动识读选择题并出班级统计。
 
 ```
 制卡端排卷  ──▶  点「🎯 阅卷模板」  ──▶  asb-omr-template-*.json  ──▶  scanner 服务
@@ -153,6 +153,7 @@ answer-sheet-builder/
 │           ├── answer.js
 │           ├── image.js
 │           └── custom.js
+├── scanner/                # 配套：扫描识别服务（Python + OpenCV + Flask，见 scanner/README.md）
 ├── LICENSE
 ├── CHANGELOG.md
 └── README.md / README_EN.md

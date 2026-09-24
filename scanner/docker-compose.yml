@@ -1,0 +1,21 @@
+services:
+  answer-sheet-scanner:
+    build:
+      context: .
+      args:
+        # 内网/无梯子环境默认走清华源，可 `PIP_INDEX=... docker compose build` 覆盖
+        PIP_INDEX: ${PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}
+    image: answer-sheet-scanner:0.1.0
+    container_name: asb-scan
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./data:/srv/data
+    healthcheck:
+      # slim 镜像没有 curl，用 python 自带 urllib 探活
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/api/template', timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped

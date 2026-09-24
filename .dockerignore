@@ -3,3 +3,6 @@
 Dockerfile
 .dockerignore
 node_modules
+
+# 配套的扫描识别服务是独立镜像，不要进 nginx 静态站点的构建上下文
+scanner/

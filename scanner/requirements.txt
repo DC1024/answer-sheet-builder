@@ -1,0 +1,4 @@
+flask==3.0.3
+numpy==1.26.4
+opencv-python-headless==4.9.0.80
+waitress==3.0.2

@@ -6,10 +6,14 @@ All notable changes to this project are documented here.
 ## [1.0.2] - 2026-09-25
 
 ### Added / 新增
-- **导出「阅卷模板」**：工具栏新增 `🎯 阅卷模板`，一键导出 `asb-omr-template-<纸张>-<题数>q-<时间戳>.json`（例：`asb-omr-template-A4-20q-20260925-0140.json`），里面是**每个填涂圈在页面上的毫米坐标**（含四角定位点、纸张尺寸、题号与选项），供配套的 [answer-sheet-scanner](../answer-sheet-scanner) 扫描识别服务做透视矫正与填涂判定。卷子里没有填涂圈模式的选择题时会明确提示，不会导出一份空模板。
-  **Export a machine-readable answer-sheet template** (`asb-omr-template-*.json`) with the **millimetre coordinates of every bubble** (plus corner marks, paper size, question and option labels) for the companion [answer-sheet-scanner](../answer-sheet-scanner) service to do perspective correction and bubble detection against. Warns clearly when the sheet has no bubble-mode choice questions.
+- **导出「阅卷模板」**：工具栏新增 `🎯 阅卷模板`，一键导出 `asb-omr-template-<纸张>-<题数>q-<时间戳>.json`（例：`asb-omr-template-A4-20q-20260925-0140.json`），里面是**每个填涂圈在页面上的毫米坐标**（含四角定位点、纸张尺寸、题号与选项），供配套的 [scanner/](scanner/) 扫描识别服务做透视矫正与填涂判定。卷子里没有填涂圈模式的选择题时会明确提示，不会导出一份空模板。
+  **Export a machine-readable answer-sheet template** (`asb-omr-template-*.json`) with the **millimetre coordinates of every bubble** (plus corner marks, paper size, question and option labels) for the companion [scanner/](scanner/) service to do perspective correction and bubble detection against. Warns clearly when the sheet has no bubble-mode choice questions.
 - 选择题填涂圈在导出的 HTML 上带 `data-q` / `data-opt` / `data-mode` 坐标钩子，便于外部脚本或自建识别流程直接遍历 DOM。
   Bubble options now carry `data-q` / `data-opt` / `data-mode` hooks in the exported HTML for external scripts.
+- **配套的扫描识别服务（`scanner/`）**：学生作答后把答题卡扫成图片，上传即可自动识读选择题、标注存疑（未涂 `blank` / 浅涂 `faint` / 多涂 `multi`），并出班级统计与 CSV。纯 OpenCV 实现、不下载模型、可离线；自带 Web 界面与 Docker 一键部署。详见 [scanner/README.md](scanner/README.md)。
+  **Companion scanner service** under `scanner/`: upload scanned answer sheets to auto-read choice answers, flag doubtful ones (unanswered / light / multiple), and get class statistics plus CSV. Pure OpenCV, no model downloads, fully offline; ships a web UI and one-command Docker deploy.
+- 开发辅助脚本挪进 `dev/`：`gen_omr_fixtures.cjs` 用无头 Chromium 打开真实制卡端渲染并导出 `scanner/tests/fixtures/` 的全部测试素材 —— 保证「测试过了」等于「真机也对得上」。见 [dev/README.md](dev/README.md)。
+  Dev tooling moved to `dev/`: `gen_omr_fixtures.cjs` drives a headless Chromium against the real builder to regenerate every fixture under `scanner/tests/fixtures/`, so passing tests actually mean the real thing works.
 
 ## [1.0.1] - 2026-09-25
 
