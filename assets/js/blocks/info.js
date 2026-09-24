@@ -26,8 +26,8 @@ export default {
       <label style="margin-top:12px;display:flex;align-items:center;gap:6px;">
         <input type="checkbox" data-k="examGrid" ${config.examGrid ? 'checked' : ''}> 启用考号填涂区
       </label>
-      <label>考号位数
-        <input type="number" min="4" max="12" data-k="examDigits" value="${config.examDigits}">
+      <label>考号位数（4–20）
+        <input type="number" min="4" max="20" data-k="examDigits" value="${config.examDigits}">
       </label>
       <p class="hint">提示：启用填涂区后，班级/姓名/考号等手写栏会放在填涂区右侧，节省空间。</p>
     `;
@@ -87,7 +87,10 @@ export default {
 
   _gridHtml(config){
     if (!config.examGrid) return '';
-    const n = Math.max(4, Math.min(12, +config.examDigits || 8));
+    const n = Math.max(4, Math.min(20, +config.examDigits || 8));
+    // 位数较多时整表按 em 等比缩小，保证不超出纸张
+    const shrink = n > 12 ? Math.max(0.6, 12 / n) : 1;
+    const fs = (0.82 * shrink).toFixed(3);
     // 顶部：考号标题（跨列）
     const head = `<tr><th class="eg-head" colspan="${n}">考 号</th></tr>`;
     // 手写行：空框，供考生手写考号
@@ -97,6 +100,6 @@ export default {
     for (let d = 0; d <= 9; d++){
       rows += `<tr>${Array.from({ length: n }, () => `<td><span class="ebrk">${d}</span></td>`).join('')}</tr>`;
     }
-    return `<div class="exam-grid"><table>${head}${write}${rows}</table></div>`;
+    return `<div class="exam-grid"><table style="font-size:${fs}em">${head}${write}${rows}</table></div>`;
   }
 };

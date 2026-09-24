@@ -1,8 +1,24 @@
 // 模块：选择题（填涂 / 手写 两种作答样式；任意选项数量，字母 A..Z, AA, AB, ...）
-import { esc, commonStyle } from '../core/util.js';
+import { esc, commonStyle, mmPx, probeSize } from '../core/util.js';
 import { store } from '../core/store.js';
 
 const MAX_OPTIONS = 60;
+
+// 旧模板迁移：早期版本把「作答样式」存在 config.style（字符串 'bubble'/'handwrite'），
+// 与「通用样式」对象（config.style.fontSize / .align）同名冲突 ——
+// ES Module 严格模式下 `'bubble'.fontSize = 18` 会抛 TypeError，
+// 导致选择题的「字号 / 对齐」控件完全失效、且作答样式被静默改写。
+// 现统一：作答样式 → config.mode；通用样式 → config.style（对象）。
+function normalize(config){
+  if (!config) return config;
+  if (typeof config.style === 'string'){
+    config.mode = config.style;
+    config.style = {};
+  }
+  if (!config.mode) config.mode = 'bubble';
+  if (!config.style || typeof config.style !== 'object') config.style = {};
+  return config;
+}
 
 // 0 -> A, 25 -> Z, 26 -> AA, 27 -> AB, ...（类似表格列名）
 function colLabel(i){
@@ -14,13 +30,22 @@ function optLabels(n){
   return Array.from({ length: n }, (_, i) => colLabel(i));
 }
 
+// 单题 HTML：题号与选项分离 —— .scn 固定不换行，.opts 内每个选项是原子块（不会跨行拆开），
+// 放不下时整块下移，避免「题号孤零零占一行」或「选项被劈成两半」。
+function qHtml(no, letters, mode){
+  if (mode !== 'bubble') return `<div class="scq hw"><span class="scn">${no}.</span><span class="hw-line"></span></div>`;
+  const cells = letters.map(l => `<span class="bub"><span class="bracket">${l}</span></span>`).join('');
+  return `<div class="scq"><span class="scn">${no}.</span><span class="opts">${cells}</span></div>`;
+}
+
 export default {
   type: 'singleChoice',
   name: '选择题',
   icon: '☑',
-  defaults: () => ({ title: '一、选择题', count: 10, cols: 5, options: 4, style: 'bubble', startNo: 1 }),
+  defaults: () => ({ title: '一、选择题', count: 10, cols: 5, options: 4, mode: 'bubble', startNo: 1 }),
 
   configUI(container, config, onChange){
+    normalize(config);
     container.innerHTML = `
       <label>标题
         <input type="text" data-k="title" value="${esc(config.title)}">
@@ -29,7 +54,7 @@ export default {
         <label>题数
           <input type="number" min="1" max="80" data-k="count" value="${config.count}">
         </label>
-        <label>每行题数（目标值，空间不足会自动折行）
+        <label>每行题数（上限，放不下时自动减少列数以保证每题完整）
           <input type="number" min="1" max="10" data-k="cols" value="${config.cols}">
         </label>
       </div>
@@ -42,14 +67,14 @@ export default {
         </label>
       </div>
       <label>作答样式
-        <select data-k="style">
+        <select data-k="mode">
           <option value="bubble">填涂（中括号）</option>
           <option value="handwrite">手写（横线）</option>
         </select>
       </label>
-      <p class="hint">选项超过 26 个后用 AA、AB… 续排；选项过多时该题会自动换行，且不会超出纸张宽度。</p>
+      <p class="hint">选项超过 26 个后用 AA、AB… 续排；选项多到一行放不下时该题独占一栏，选项按行排满后换行，绝不会超出纸张宽度。</p>
     `;
-    container.querySelector('[data-k="style"]').value = config.style;
+    container.querySelector('[data-k="mode"]').value = config.mode;
     container.querySelectorAll('[data-k]').forEach(el => {
       const ev = (el.tagName === 'SELECT') ? 'change' : 'input';
       el.addEventListener(ev, () => {
@@ -65,46 +90,52 @@ export default {
   },
 
   render(config){
+    normalize(config);
     const opts = Math.max(2, Math.min(MAX_OPTIONS, +config.options || 4));
     const letters = optLabels(opts);
     const start = Math.max(1, +config.startNo || 1);
     const count = Math.max(1, +config.count || 1);
     const style = commonStyle(config);
 
-    // 根据纸张与字号计算可用列数，防止溢出
-    const cols = this._fitCols(config, opts, letters[opts - 1].length);
+    const cols = this._fitCols(config, letters, style);
 
     let rows = '';
-    for (let i = 0; i < count; i++){
-      const no = start + i;
-      if (config.style === 'bubble'){
-        const cells = letters.map(l => `<span class="bub"><span class="bracket">${l}</span></span>`).join('');
-        rows += `<div class="scq"><span class="scn">${no}.</span>${cells}</div>`;
-      } else {
-        rows += `<div class="scq hw"><span class="scn">${no}.</span><span class="hw-line"></span></div>`;
-      }
-    }
+    for (let i = 0; i < count; i++) rows += qHtml(start + i, letters, config.mode);
+
     return `<div class="blk" style="${style}"><div class="blk-title">${esc(config.title)}</div>
       <div class="sc-grid" style="grid-template-columns:repeat(${cols},minmax(0,1fr))">${rows}</div></div>`;
   },
 
-  // 计算不溢出的列数：A3 双栏按 A4 栏宽算；A4 按整张宽算。
-  // 若单个题目的选项一行都放不下（可用宽 < 单题宽），返回 1 栏并交给 CSS 自动换行。
-  _fitCols(config, opts, maxLen = 1){
+  // 计算列数：保证「题号 + 全部选项」在单行内完整排下。
+  // 排不下的整题换到下一行，而不是把某题的最后一个选项挤到第二行。
+  // 关键在于「实测」而不是估算：把单题渲染到离屏容器里量真实宽度，
+  // 这样字号、字体度量、多字符字母（AA…）都能自动算准。
+  _fitCols(config, letters, style){
     const { size } = store.paper;
     const sheetW = (size === 'A3') ? 297 : 210;
-    const usable = size === 'A3' ? (sheetW - 14 - 6) / 2 : (sheetW - 14); // mm
+    // 与 preview.js 的 colW 保持一致：A3 双栏 → 半栏；A4 → 整幅
+    const colMM = size === 'A3' ? (sheetW - 14 - 6) / 2 : (sheetW - 14);
+    const px = mmPx();
 
-    const fontPx = parseFloat(config.style && config.style.fontSize) || 14;
-    const emMM = fontPx * 0.264583;                 // 1em ≈ ? mm
-    const gapMM = (12 / fontPx) * emMM;             // 栏间距约 12px
+    // .blk 左右 padding(10px) + 边框(1.5px)，与 style.css 中 .blk 的定义对应
+    const padPx = 2 * (10 + 1.5);
+    const innerPx = colMM * px - padPx;   // 单栏真正可用的内容宽度
+    const gapPx = 12;                     // .sc-grid 列间距
 
-    // 单个选项占用宽度(em)：方框(1.215) + 右边距(约0.36) + 多字符字母余量
-    const optEm = 1.215 + 0.36 + (maxLen > 1 ? 0.35 * (maxLen - 1) : 0);
-    const qMM = (1.9 + opts * optEm) * emMM;        // 题号 + 全部选项
+    // 实测单题（题号 + 全部选项）所需宽度
+    const probe = probeSize(
+      `<div class="blk" style="${style}"><div class="sc-grid" style="grid-template-columns:max-content">${qHtml(1, letters, config.mode)}</div></div>`,
+      '.scq'
+    );
+    const qPx = probe.width;
 
-    if (qMM >= usable - 0.5) return 1;              // 一行放不下 → 单栏 + 自动换行
-    const maxCols = Math.max(1, Math.floor((usable + gapMM) / (qMM + gapMM)));
+    // 测量失败（无 DOM 环境）→ 退回保守估算
+    if (!qPx) return Math.min(Math.max(1, +config.cols || 1), 3);
+
+    // 单题一行都放不下（选项极多）→ 单栏，选项在 .opts 内排满一行后换行
+    if (qPx > innerPx - 0.5) return 1;
+
+    const maxCols = Math.max(1, Math.floor((innerPx + gapPx) / (qPx + gapPx)));
     return Math.min(maxCols, Math.max(1, +config.cols || 1));
   }
 };

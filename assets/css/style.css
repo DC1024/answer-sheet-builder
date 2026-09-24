@@ -92,6 +92,19 @@ button.danger{border-color:#e06a6a;color:#c0392b;}
 }
 .page .col{flex:1 1 0;min-width:0;}
 
+/* 定位点（四角）：方块 / 三角；仅出现在「有题目内容的面」上，绝对定位不占排版流。
+   打印时强制输出底色，否则多数浏览器会丢弃黑色块。 */
+.page .cmark{position:absolute;background:#000;pointer-events:none;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+.page .cmark.tl{top:4mm;left:4mm;}
+.page .cmark.tr{top:4mm;right:4mm;}
+.page .cmark.bl{bottom:4mm;left:4mm;}
+.page .cmark.br{bottom:4mm;right:4mm;}
+/* 三角：直角贴外角，斜边朝内（右上/右下角镜像） */
+.page .cmark.tri.tl{clip-path:polygon(0 0,100% 0,0 100%);}
+.page .cmark.tri.tr{clip-path:polygon(0 0,100% 0,100% 100%);}
+.page .cmark.tri.bl{clip-path:polygon(0 0,0 100%,100% 100%);}
+.page .cmark.tri.br{clip-path:polygon(100% 0,100% 100%,0 100%);}
+
 /* ===== 答题卡内部元素 ===== */
 /* 每个题型区块统一加黑色边框（item 1）；font-size 作基准，子元素用 em 继承，
    这样「通用样式」里调字号就能整体生效（修复：字号无反应） */
@@ -114,20 +127,22 @@ button.danger{border-color:#e06a6a;color:#c0392b;}
 .info-field-row .lab{font-weight:700;white-space:nowrap;}
 .info-field-row .il{display:inline-block;border-bottom:1.5px solid var(--line);}
 
-.exam-grid{border:1.5px solid var(--line);border-radius:4px;padding:6px 8px;}
+.exam-grid{border:1.5px solid var(--line);border-radius:4px;padding:0.4em 0.5em;flex:0 1 auto;min-width:0;}
 .exam-grid table{border-collapse:collapse;font-size:0.82em;margin:0 auto;}
-.exam-grid td,.exam-grid th{border:1px solid #b9c2cc;padding:2px 4px;text-align:center;}
-.exam-grid .eg-head{font-weight:700;letter-spacing:4px;padding:4px;}
-.exam-grid .write{height:1.7em;min-width:1.6em;}
-/* 考号填涂：中括号内即为数字，呈 [0] [1] … */
-.exam-grid .ebrk{display:inline-flex;align-items:center;justify-content:center;min-width:1.15em;height:1.15em;padding:0 2px;border:1.4px solid #333;font-size:0.95em;line-height:1;vertical-align:middle;}
+.exam-grid td,.exam-grid th{border:1px solid #b9c2cc;padding:0.18em 0.36em;text-align:center;}
+.exam-grid .eg-head{font-weight:700;letter-spacing:0.4em;padding:0.32em;}
+.exam-grid .write{height:1.7em;}
+/* 考号填涂：中括号内即为数字，呈 [0] [1] …（位数多时整表按 em 等比缩小，不溢出） */
+.exam-grid .ebrk{display:inline-flex;align-items:center;justify-content:center;min-width:1.15em;height:1.15em;padding:0 0.12em;border:0.12em solid #333;font-size:0.95em;line-height:1;vertical-align:middle;}
 
 /* 选择题 填涂/手写 */
-.sc-grid{display:grid;gap:4px 12px;}
-.scq{display:flex;align-items:center;gap:5px;row-gap:3px;flex-wrap:wrap;padding:2px 0;min-width:0;justify-content:var(--jc,flex-start);}
-.scq .scn{font-weight:800;min-width:22px;}
-.scq .bub{display:inline-flex;align-items:center;gap:2px;margin-right:5px;}
-.scq .bracket{display:inline-flex;align-items:center;justify-content:center;width:1.35em;height:1.35em;font-size:0.9em;border:1.5px solid #333;}
+.sc-grid{display:grid;gap:4px 12px;align-items:start;}
+/* 题号与选项分离：选项在 .opts 内自动换行，第 2 行起对齐到第一个选项下方 */
+.scq{display:flex;align-items:flex-start;gap:5px;padding:2px 0;min-width:0;}
+.scq .scn{font-weight:800;min-width:1.6em;flex:0 0 auto;}
+.scq .opts{display:flex;flex-wrap:wrap;gap:3px 6px;min-width:0;flex:1 1 auto;justify-content:var(--jc,flex-start);}
+.scq .bub{display:inline-flex;align-items:center;gap:2px;}
+.scq .bracket{display:inline-flex;align-items:center;justify-content:center;min-width:1.35em;height:1.35em;padding:0 0.1em;font-size:0.9em;border:1.5px solid #333;}
 .scq.hw .hw-line{flex:1;border-bottom:1.5px solid var(--line);min-height:14px;min-width:40px;}
 
 /* 填空 */

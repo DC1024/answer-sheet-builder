@@ -136,7 +136,8 @@ function renderProps(){
       </label>
     </div>`;
   styleWrap.querySelector('[data-cs="align"]').value = b.config.style?.align || '';
-  if (!b.config.style) b.config.style = {};
+  // 防御：部分题型的 config.style 历史上被当作字符串用，这里强制归一为对象，避免严格模式抛 TypeError
+  if (!b.config.style || typeof b.config.style !== 'object') b.config.style = {};
   styleWrap.querySelectorAll('[data-cs]').forEach(el => {
     const ev = el.tagName === 'SELECT' ? 'change' : 'input';
     el.addEventListener(ev, () => {
@@ -179,6 +180,18 @@ function bindToolbar(){
   orientSel.value = store.paper.orientation;
   sizeSel.addEventListener('change', e => { store.paper.size = e.target.value; applyPaper(); renderPreviewAndGuides(); });
   orientSel.addEventListener('change', e => { store.paper.orientation = e.target.value; applyPaper(); renderPreviewAndGuides(); });
+
+  // 定位点：样式 + 边长（每面只要有内容就自动加四角定位点）
+  const marksSel = document.getElementById('paper-marks');
+  const markSizeIn = document.getElementById('mark-size');
+  marksSel.value = store.paper.marks || 'square';
+  markSizeIn.value = store.paper.markSize || 4;
+  marksSel.addEventListener('change', e => { store.paper.marks = e.target.value; renderPreviewAndGuides(); });
+  markSizeIn.addEventListener('input', e => {
+    const v = parseFloat(e.target.value);
+    if (!isNaN(v)) store.paper.markSize = Math.max(1, Math.min(12, v));
+    renderPreviewAndGuides();
+  });
 
   document.getElementById('btn-print').addEventListener('click', () => window.print());
   document.getElementById('btn-save').addEventListener('click', () => {

@@ -4,7 +4,8 @@ import { uid, deepClone } from './util.js';
 const STORAGE_KEY = 'answer-sheet-builder.v1';
 
 export const store = {
-  paper: { size: 'A3', orientation: 'portrait' },
+  // marks：定位点样式（none / square / triangle）；markSize：定位点边长(mm)
+  paper: { size: 'A3', orientation: 'portrait', marks: 'square', markSize: 4 },
   blocks: [],
   selectedId: null,
   _subs: [],
@@ -69,7 +70,7 @@ export const store = {
       if (!raw) return false;
       const data = JSON.parse(raw);
       if (data && Array.isArray(data.blocks)){
-        this.paper = data.paper || this.paper;
+        this.paper = Object.assign({}, this.paper, data.paper || {});
         this.blocks = data.blocks;
         this.selectedId = null;
         return true;
@@ -79,7 +80,7 @@ export const store = {
   },
   import(data){
     if (data && Array.isArray(data.blocks)){
-      this.paper = data.paper || this.paper;
+      this.paper = Object.assign({}, this.paper, data.paper || {});
       this.blocks = data.blocks;
       this.selectedId = null;
       this.emit();

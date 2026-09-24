@@ -3,24 +3,13 @@
 // 实现：JS 分页引擎 —— 测量每个区块真实高度，按固定页高塞入固定尺寸 .page 卡片。
 import { store } from './store.js';
 import { registry } from './registry.js';
+import { mmPx } from './util.js';
 
 // 纸张物理尺寸(mm)
 const DIMS = {
   A3: { w: 297, h: 420 },
   A4: { w: 210, h: 297 }
 };
-
-// 像素/毫米换算（浏览器中 1mm = 96/25.4 px，但用真实测量更稳）
-let _mmPx = 0;
-function mmPx(){
-  if (_mmPx) return _mmPx;
-  const d = document.createElement('div');
-  d.style.cssText = 'position:absolute;left:-99999px;top:0;width:1mm;height:1mm;';
-  document.body.appendChild(d);
-  _mmPx = d.getBoundingClientRect().width;
-  d.remove();
-  return _mmPx;
-}
 
 export function renderPreview(el){
   const { size, orientation } = store.paper;
@@ -101,6 +90,23 @@ export function renderPreview(el){
   }
 
   meas.remove();
+
+  // 2.5) 定位点：每一面（.page 卡片）只要有题目内容，就在四角补定位点；
+  //      空白面不加。绝对定位，不参与排版流，因此不影响分页测量。
+  const markStyle = store.paper.marks || 'none';
+  const markSize = Math.max(1, Math.min(12, +(store.paper.markSize || 4)));
+  if (markStyle !== 'none'){
+    for (const p of pages){
+      if (!p._cols.some(c => c.children.length > 0)) continue; // 空面跳过
+      for (const pos of ['tl', 'tr', 'bl', 'br']){
+        const m = document.createElement('div');
+        m.className = 'cmark' + (markStyle === 'triangle' ? ' tri' : '') + ' ' + pos;
+        m.style.width = markSize + 'mm';
+        m.style.height = markSize + 'mm';
+        p.appendChild(m);
+      }
+    }
+  }
 
   // 3) 输出
   el.innerHTML = '';
