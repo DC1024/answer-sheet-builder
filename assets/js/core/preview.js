@@ -5,6 +5,7 @@ import { store } from './store.js';
 import { registry } from './registry.js';
 import { mmPx } from './util.js';
 import { pageGeom, MARK_INSET, COL_GAP_MM } from './geometry.js';
+import { ui } from './uistate.js';
 
 export function renderPreview(el){
   // 几何（含定位点占用的页边距带）统一由 geometry.js 提供，不再本地硬编码
@@ -32,6 +33,8 @@ export function renderPreview(el){
       wrap.querySelectorAll('.ans-box .ab').forEach((ab, i) => {
         ab.dataset.blk = b.id;
         ab.dataset.qi = i;
+        // 当前指向的那一题（悬停 / 点选）在预览里高亮，作为 Ctrl+V 贴图的目标提示
+        if (ui.ansId === b.id && (ui.ansQ | 0) === i) ab.classList.add('on');
       });
     }
     meas.appendChild(wrap);

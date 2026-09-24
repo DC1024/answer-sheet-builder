@@ -83,6 +83,12 @@ button:disabled:hover{background:#f3f5f8;}
 .qrow button{padding:3px 8px;font-size:12px;}
 /* 解答题每题的图片配置卡片 */
 .qcard{border:1px dashed #cfe2f5;border-radius:8px;padding:6px 8px;margin:8px 0;}
+/* 当前指向的那一题（Ctrl+V 贴图目标）在属性面板里高亮 */
+.qcard.on{border-color:#2b6cb0;border-style:solid;background:#f5f9ff;}
+.qcard .qcur{
+  font-style:normal;font-size:11px;color:#fff;background:#2b6cb0;
+  border-radius:8px;padding:0 6px;margin-left:4px;
+}
 .qcard .qrow span{min-width:auto;}
 .qcard input[type=file]{width:100%;font-size:12px;}
 .img-thumb{margin-top:4px;border:1px solid #e6eaef;border-radius:6px;padding:4px;background:#fafcfe;text-align:center;}
@@ -213,6 +219,29 @@ button:disabled:hover{background:#f3f5f8;}
     #cdd5df var(--lg,8mm));
 }
 
+/* 作答区内的叠加图片：绝对定位、不占高度、不挤压横线（学生可照常在旁边书写）。
+   宽高上限都是 100%，超出作答区的部分自动裁切，绝不溢出到下一题。位置由九宫格 class 决定。 */
+.ans-box .ans-ov{
+  position:absolute;z-index:2;pointer-events:none;
+  max-width:100%;max-height:100%;overflow:hidden;
+}
+.ans-box .ans-ov img{display:block;width:100%;height:auto;}
+.ans-box .ans-ov.pos-tl{top:0;left:0;}
+.ans-box .ans-ov.pos-tc{top:0;left:50%;transform:translateX(-50%);}
+.ans-box .ans-ov.pos-tr{top:0;right:0;}
+.ans-box .ans-ov.pos-ml{top:50%;left:0;transform:translateY(-50%);}
+.ans-box .ans-ov.pos-mc{top:50%;left:50%;transform:translate(-50%,-50%);}
+.ans-box .ans-ov.pos-mr{top:50%;right:0;transform:translateY(-50%);}
+.ans-box .ans-ov.pos-bl{bottom:0;left:0;}
+.ans-box .ans-ov.pos-bc{bottom:0;left:50%;transform:translateX(-50%);}
+.ans-box .ans-ov.pos-br{bottom:0;right:0;}
+/* 当前指向的作答区（Ctrl+V 贴图目标）：细蓝框提示，仅编辑态可见，打印时不输出 */
+.ans-box .ab.on{outline:2px solid #2b6cb0;outline-offset:-2px;}
+.ans-box .ab.on::after{
+  content:'当前题';position:absolute;top:2px;right:3px;z-index:6;
+  font-size:10px;color:#fff;background:#2b6cb0;border-radius:8px;padding:0 6px;line-height:15px;
+}
+
 /* 作答区「拖动调高度」把手：绝对定位贴在作答区下边缘，不占高度、不影响分页测量。
    拖动中只改 DOM height（实时反馈），松手才写回 config（一次拖动 = 一个撤销点）。 */
 .rz-grip{
@@ -262,5 +291,8 @@ body.rz-drag{user-select:none;-webkit-user-select:none;cursor:ns-resize;}
   .blk,.ans-box,.custom-box,.info-box{break-inside:avoid;}
   /* 拖动把手只是编辑辅助，绝不能出现在打印 / PDF 上 */
   .rz-grip{display:none !important;}
+  /* 「当前题」选中框与角标同样只是编辑辅助 */
+  .ans-box .ab.on{outline:none !important;}
+  .ans-box .ab.on::after{display:none !important;}
   #toast{display:none !important;}
 }

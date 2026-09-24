@@ -6,6 +6,8 @@ All notable changes to this project are documented here.
 ## [未发布] / [Unreleased]
 
 ### Added / 新增
+- **解答题图片直接贴进作答区**：选中解答题模块后，把鼠标停在预览区某个作答区上按 **Ctrl+V**，图片即贴进该题（点选作答区也可以，属性面板同步高亮该题卡；未悬停时贴到第 1 题）。图片**叠加在作答区内** —— 绝对定位、不占高度、不挤压横线，学生照常在旁边书写；**九宫格定位**（左上/上中/右上/左中/居中/右中/左下/下中/右下）+ 图片宽（%）可调；超出作答区的部分自动裁切，绝不溢出到下一题。「当前题」在预览区有细蓝框 + 角标提示，打印 / PDF 时不输出。
+  **Paste images straight into a free-response answer area**: select the block, hover an answer area in the preview and press **Ctrl+V** (clicking works too — the properties panel highlights that question; default is question 1). The image **overlays inside the answer box** — absolutely positioned, takes no height, never squeezes the ruled lines; **9-grid positioning** plus width (%); anything beyond the box is clipped so nothing spills into the next question. The "current question" highlight is screen-only.
 - **解答题作答区可直接拖动调高度**：预览区每题作答区的下边缘有拖动把手（悬停出现蓝条），按住上下拖即**实时**改变高度（把手同步显示当前 mm 数，40–400mm 自动夹取）；松手才写入配置并记为一个撤销点，属性面板数字同步更新。拖动过程不重渲染（重渲染会把把手从指针下抽走），打印 / 导出 PDF 时把手自动隐藏。
   **Drag the bottom edge of a free-response answer area in the preview** to resize it live — the grip shows the current mm value while dragging (clamped 40–400mm); the value is committed on release as one undo step and the properties panel stays in sync. The grip is hidden in print / PDF.
 - **撤销 / 重做**：快照式历史（最多 100 步），连续输入会按 0.7s 时间窗合并为一步；工具栏 `↶ 撤销 / ↷ 重做`（无历史时置灰），快捷键 **Ctrl+Z / Ctrl+Y（或 Ctrl+Shift+Z）**。

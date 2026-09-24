@@ -3,6 +3,7 @@ import { store } from './core/store.js';
 import { registry } from './core/registry.js';
 import { renderPreview } from './core/preview.js';
 import { uid, deepClone, compressImage, mmPx } from './core/util.js';
+import { setAnsTarget, ansTargetFor, clearAnsTarget } from './core/uistate.js';
 
 let dragId = null;
 let dropTarget = null;
@@ -85,8 +86,8 @@ function cutSelected(){
   return true;
 }
 
-// 粘贴：① 剪贴板里有图片且当前选中「图片」模块 → 贴图；② 应用内复制过模块 → 插到其后；
-//       ③ 剪贴板文本是单个模块 JSON → 也直接插入
+// 粘贴：① 剪贴板里有图片 → 选中「图片」模块时贴图；选中「解答题」时贴进悬停/点选的
+//       那个作答区；② 应用内复制过模块 → 插到其后；③ 剪贴板文本是单个模块 JSON → 也插入
 function pasteFromEvent(ev){
   const dt = ev.clipboardData;
   if (!dt) return false;
@@ -96,21 +97,38 @@ function pasteFromEvent(ev){
   if (dt.items){
     for (const it of dt.items){
       if (it.kind === 'file' && /^image\//.test(it.type)){
-        if (sel && sel.type === 'image'){
+        if (sel && (sel.type === 'image' || sel.type === 'answer')){
           const f = it.getAsFile();
           if (f){
+            if (sel.type === 'image'){
+              compressImage(f, ok => {
+                if (!ok) return;
+                sel.config.src = ok.url;
+                sel.config.ratio = ok.ratio;
+                store.commit('paste-img');
+                store.emit();
+                toast('图片已粘贴（本地压缩，仅存浏览器缓存）');
+              });
+              return true;
+            }
+            // 解答题：贴到「当前指向」的那一题（预览区悬停 / 点选决定，缺省第 1 题）
+            const qi = Math.min(ansTargetFor(sel.id), (sel.config.questions || []).length - 1);
+            const q = (sel.config.questions || [])[qi];
+            if (!q) return true;
             compressImage(f, ok => {
               if (!ok) return;
-              sel.config.src = ok.url;
-              sel.config.ratio = ok.ratio;
-              store.commit('paste-img');
+              q.img = ok.url;
+              q.ratio = ok.ratio || 0;
+              if (!q.imgPos) q.imgPos = 'mc';
+              setAnsTarget(sel.id, qi);
+              store.commit('paste-ans-img:' + sel.id + ':' + qi);
               store.emit();
-              toast('图片已粘贴（本地压缩，仅存浏览器缓存）');
+              toast(`图片已粘贴到第 ${qi + 1} 题作答区（${Math.round(q.imgW || 60)}% 宽）`);
             });
             return true;
           }
         }
-        toast('图片需选中「图片」模块后才能粘贴');
+        toast('图片需选中「图片」或「解答题」模块后才能粘贴');
         return true;
       }
     }
@@ -245,7 +263,7 @@ function renderProps(){
   wrap.appendChild(head);
   const form = document.createElement('div');
   wrap.appendChild(form);
-  mod.configUI(form, b.config, liveUpdate);
+  mod.configUI(form, b.config, liveUpdate, b);
 
   // 通用样式：字号 + 对齐（作用于该模块整体）
   const styleWrap = document.createElement('div');
@@ -367,6 +385,31 @@ function bindResizers(){
   window.addEventListener('pointercancel', end);
 }
 
+/* ---------- 预览内点选 / 悬停作答区 → 决定「当前题」（Ctrl+V 贴图的目标） ---------- */
+// 与拖动把手一样走 #sheet 的事件委托：作答区每次重渲染都会重建。
+// 只改运行期的 ui 状态，不写进 config，不产生撤销点。
+function bindAnswerTarget(){
+  const sheet = document.getElementById('sheet');
+
+  sheet.addEventListener('pointerover', e => {
+    const ab = e.target.closest && e.target.closest('.ab[data-blk]');
+    if (!ab) return;
+    setAnsTarget(ab.dataset.blk, parseInt(ab.dataset.qi, 10) || 0);
+  });
+
+  sheet.addEventListener('click', e => {
+    if (e.target.closest && e.target.closest('.rz-grip')) return;   // 拖高度不算点选
+    const ab = e.target.closest && e.target.closest('.ab[data-blk]');
+    if (!ab) return;
+    const id = ab.dataset.blk;
+    const qi = parseInt(ab.dataset.qi, 10) || 0;
+    setAnsTarget(id, qi);
+    if (store.selectedId !== id){ store.selectedId = id; }
+    store.emit();                    // 触发 fullRender → 属性面板高亮 + 预览区 .ab.on
+    toast(`已选中第 ${qi + 1} 题作答区（Ctrl+V 可贴图）`);
+  });
+}
+
 /* ---------- 全量渲染 ---------- */
 function fullRender(){
   syncPaperControls();
@@ -439,6 +482,7 @@ function init(){
   bindToolbar();
   bindShortcuts();
   bindResizers();
+  bindAnswerTarget();
   fullRender();
   store.subscribe(fullRender);
   window.addEventListener('resize', renderPreviewAndGuides);
