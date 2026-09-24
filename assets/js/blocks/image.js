@@ -15,10 +15,10 @@ export default {
 
   configUI(container, config, onChange){
     container.innerHTML = `
-      <label>标题（留空则不显示）
+      <label>标题(可空)
         <input type="text" data-k="title" value="${esc(config.title || '')}" placeholder="例如：示意图 / 地图 / 材料图">
       </label>
-      <label>选择图片（自动压缩，仅存本地浏览器）
+      <label>选择图片
         <input type="file" accept="image/*" data-k="file">
       </label>
       <div class="row">

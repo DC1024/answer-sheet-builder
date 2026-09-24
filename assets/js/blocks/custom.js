@@ -9,10 +9,10 @@ export default {
 
   configUI(container, config, onChange){
     container.innerHTML = `
-      <label>标题（留空则不显示）
+      <label>标题(可空)
         <input type="text" data-k="title" value="${esc(config.title)}" placeholder="例如：注意事项">
       </label>
-      <label>内容（支持换行）
+      <label>内容
         <textarea data-k="content">${esc(config.content)}</textarea>
       </label>
       <p class="hint">内容按纯文本渲染，换行会被保留。</p>

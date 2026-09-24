@@ -50,14 +50,16 @@ button.danger{border-color:#e06a6a;color:#c0392b;}
 
 /* 属性面板 */
 .props{font-size:13px;}
-.props .hint{color:#888;font-size:13px;}
-.props label{display:block;margin:8px 0;font-size:13px;}
+.props .hint{color:#8a94a0;font-size:12px;line-height:1.55;margin:7px 0 0;}
+.props label{display:block;margin:9px 0;font-size:12.5px;color:#3b4757;}
 .props input[type=text],.props input[type=number],.props select,.props textarea{
-  width:100%;padding:6px 8px;border:1px solid #c4ccd6;border-radius:6px;font-size:13px;margin-top:3px;font-family:inherit;
+  width:100%;padding:6px 8px;border:1px solid #c4ccd6;border-radius:6px;font-size:13px;margin-top:4px;font-family:inherit;
 }
 .props textarea{min-height:90px;resize:vertical;}
-.props .row{display:flex;gap:8px;}
-.props .row > *{flex:1;}
+/* 两列并排：align-items:flex-end 让输入框底部对齐 ——
+   否则一侧标签换行成两行时，两个输入框会一高一低错位 */
+.props .row{display:flex;gap:8px;align-items:flex-end;}
+.props .row > *{flex:1;min-width:0;}
 .qlist{margin:8px 0;border:1px solid #e6eaef;border-radius:8px;padding:8px;}
 .qrow{display:flex;align-items:center;gap:8px;margin:6px 0;}
 .qrow span{font-size:13px;min-width:48px;}
@@ -93,12 +95,10 @@ button.danger{border-color:#e06a6a;color:#c0392b;}
 .page .col{flex:1 1 0;min-width:0;}
 
 /* 定位点（四角）：方块 / 三角；仅出现在「有题目内容的面」上，绝对定位不占排版流。
+   位置（内缩量）与边长由 preview.js 按「预留页边距带」内联设置 —— 保证定位点永远落在
+   页边距带内、不覆盖任何内容。
    打印时强制输出底色，否则多数浏览器会丢弃黑色块。 */
 .page .cmark{position:absolute;background:#000;pointer-events:none;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-.page .cmark.tl{top:4mm;left:4mm;}
-.page .cmark.tr{top:4mm;right:4mm;}
-.page .cmark.bl{bottom:4mm;left:4mm;}
-.page .cmark.br{bottom:4mm;right:4mm;}
 /* 三角：直角贴外角，斜边朝内（右上/右下角镜像） */
 .page .cmark.tri.tl{clip-path:polygon(0 0,100% 0,0 100%);}
 .page .cmark.tri.tr{clip-path:polygon(0 0,100% 0,100% 100%);}
@@ -120,20 +120,35 @@ button.danger{border-color:#e06a6a;color:#c0392b;}
 .info-field .il{display:inline-block;border-bottom:1.5px solid var(--line);}
 
 /* 考号填涂区 + 右侧手写栏 */
-.info-body{display:flex;gap:12px;align-items:flex-start;justify-content:var(--jc,flex-start);}
+/* 考生信息栏：填涂区与手写栏同一行 —— 填涂区宽度由 info.js 按「格子可填涂所需」给出，
+   余下宽度全部交给手写栏（下划线自动拉满），即「适量压榨右侧空间」 */
+.info-body{display:flex;gap:3.2mm;align-items:flex-start;justify-content:var(--jc,flex-start);}
 .info-body .exam-grid{flex:0 0 auto;margin-top:0;}
-.info-fields-col{display:flex;flex-direction:column;gap:12px;flex:1;justify-content:center;align-items:var(--jc,stretch);}
+/* 手写栏（有填涂区时）：整列占满剩余宽度，下划线 flex 拉满，右侧不留白；
+   设定的宽度作为最小宽度（被压缩时由 info.js 折算出新的 min-width） */
+.info-fields-col{display:flex;flex-direction:column;gap:10px;flex:1 1 auto;min-width:0;justify-content:center;align-items:var(--jc,stretch);}
 .info-field-row{display:flex;align-items:baseline;gap:6px;}
 .info-field-row .lab{font-weight:700;white-space:nowrap;}
-.info-field-row .il{display:inline-block;border-bottom:1.5px solid var(--line);}
+.info-field-row .il{display:inline-block;border-bottom:1.5px solid var(--line);flex:1 1 auto;min-width:0;}
 
-.exam-grid{border:1.5px solid var(--line);border-radius:4px;padding:0.4em 0.5em;flex:0 1 auto;min-width:0;}
-.exam-grid table{border-collapse:collapse;font-size:0.82em;margin:0 auto;}
-.exam-grid td,.exam-grid th{border:1px solid #b9c2cc;padding:0.18em 0.36em;text-align:center;}
+.exam-grid{border:1.5px solid var(--line);border-radius:4px;padding:0.4em 0.5em;min-width:0;box-sizing:border-box;}
+/* width:100% + table-layout:fixed：各数字格等宽；格宽 = 填涂区宽 ÷ 位数。
+   填涂区自身的宽度由 info.js 按「气泡需要的宽度」算出（见 .ebrk 的 --brk） */
+.exam-grid table{border-collapse:collapse;font-size:0.82em;margin:0 auto;width:100%;table-layout:fixed;}
+/* 数字格左右不留 padding：格宽 = 方框边长 + 自适应间距（间距全由 info.js 的 cellGapMM 控制），
+   这样画出来的方框尺寸就是 JS 算出的尺寸，不会因为 padding 挤到邻居格 */
+.exam-grid td,.exam-grid th{border:1px solid #b9c2cc;padding:0.18em 0;text-align:center;}
 .exam-grid .eg-head{font-weight:700;letter-spacing:0.4em;padding:0.32em;}
 .exam-grid .write{height:1.7em;}
-/* 考号填涂：中括号内即为数字，呈 [0] [1] …（位数多时整表按 em 等比缩小，不溢出） */
-.exam-grid .ebrk{display:inline-flex;align-items:center;justify-content:center;min-width:1.15em;height:1.15em;padding:0 0.12em;border:0.12em solid #333;font-size:0.95em;line-height:1;vertical-align:middle;}
+/* 考号填涂格：边长由 --brk（mm）直接给定 ——
+   尺寸取决于「可用宽度 ÷ 位数」，与字号解耦，因此位数再多也能先把格子撑到可填涂的大小；
+   格内数字按边长等比取字号，保证格子变小时数字仍清晰。
+   box-sizing:border-box 保证 --brk 就是「含边框的外框尺寸」，不会撑破单元格。 */
+.exam-grid .ebrk{
+  box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;
+  width:var(--brk,4mm);height:var(--brk,4mm);
+  border:0.2mm solid #333;font-size:calc(var(--brk,4mm) * 0.62);line-height:1;vertical-align:middle;
+}
 
 /* 选择题 填涂/手写 */
 .sc-grid{display:grid;gap:4px 12px;align-items:start;}

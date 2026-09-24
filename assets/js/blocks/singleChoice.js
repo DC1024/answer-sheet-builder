@@ -1,6 +1,6 @@
 // 模块：选择题（填涂 / 手写 两种作答样式；任意选项数量，字母 A..Z, AA, AB, ...）
 import { esc, commonStyle, mmPx, probeSize } from '../core/util.js';
-import { store } from '../core/store.js';
+import { blockInnerMM } from '../core/geometry.js';
 
 const MAX_OPTIONS = 60;
 
@@ -54,12 +54,12 @@ export default {
         <label>题数
           <input type="number" min="1" max="80" data-k="count" value="${config.count}">
         </label>
-        <label>每行题数（上限，放不下时自动减少列数以保证每题完整）
+        <label>每行题数
           <input type="number" min="1" max="10" data-k="cols" value="${config.cols}">
         </label>
       </div>
       <div class="row">
-        <label>选项数（2–60）
+        <label>选项数
           <input type="number" min="2" max="60" data-k="options" value="${config.options}">
         </label>
         <label>起始题号
@@ -72,7 +72,7 @@ export default {
           <option value="handwrite">手写（横线）</option>
         </select>
       </label>
-      <p class="hint">选项超过 26 个后用 AA、AB… 续排；选项多到一行放不下时该题独占一栏，选项按行排满后换行，绝不会超出纸张宽度。</p>
+      <p class="hint">「每行题数」为上限：空间不足时会自动减少列数，保证每道题的题号与全部选项都排在同一行内。选项超过 26 个用 AA、AB… 续排；选项多到一行放不下时该题独占一栏，按行排满后换行，不会超出纸张。</p>
     `;
     container.querySelector('[data-k="mode"]').value = config.mode;
     container.querySelectorAll('[data-k]').forEach(el => {
@@ -111,15 +111,8 @@ export default {
   // 关键在于「实测」而不是估算：把单题渲染到离屏容器里量真实宽度，
   // 这样字号、字体度量、多字符字母（AA…）都能自动算准。
   _fitCols(config, letters, style){
-    const { size } = store.paper;
-    const sheetW = (size === 'A3') ? 297 : 210;
-    // 与 preview.js 的 colW 保持一致：A3 双栏 → 半栏；A4 → 整幅
-    const colMM = size === 'A3' ? (sheetW - 14 - 6) / 2 : (sheetW - 14);
     const px = mmPx();
-
-    // .blk 左右 padding(10px) + 边框(1.5px)，与 style.css 中 .blk 的定义对应
-    const padPx = 2 * (10 + 1.5);
-    const innerPx = colMM * px - padPx;   // 单栏真正可用的内容宽度
+    const innerPx = blockInnerMM() * px;  // 单栏真正可用的内容宽度（已扣 .blk 的 padding 与边框）
     const gapPx = 12;                     // .sc-grid 列间距
 
     // 实测单题（题号 + 全部选项）所需宽度
@@ -128,14 +121,16 @@ export default {
       '.scq'
     );
     const qPx = probe.width;
+    // 留 1% 余量：不同机器 / 浏览器的字体度量有亚像素差异，避免卡在临界值而掉列
+    const qSafe = qPx * 1.01;
 
     // 测量失败（无 DOM 环境）→ 退回保守估算
     if (!qPx) return Math.min(Math.max(1, +config.cols || 1), 3);
 
     // 单题一行都放不下（选项极多）→ 单栏，选项在 .opts 内排满一行后换行
-    if (qPx > innerPx - 0.5) return 1;
+    if (qSafe > innerPx - 0.5) return 1;
 
-    const maxCols = Math.max(1, Math.floor((innerPx + gapPx) / (qPx + gapPx)));
+    const maxCols = Math.max(1, Math.floor((innerPx + gapPx) / (qSafe + gapPx)));
     return Math.min(maxCols, Math.max(1, +config.cols || 1));
   }
 };

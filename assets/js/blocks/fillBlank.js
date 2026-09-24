@@ -59,12 +59,12 @@ export default {
       <label>起始题号
         <input type="number" min="1" max="200" data-k="startNo" value="${config.startNo}">
       </label>
-      <label>行间距（每题之间的间距，单位 mm）
+      <label>行间距(mm)
         <input type="number" min="2" max="30" data-k="gap" value="${config.gap ?? 6}">
       </label>
       <div id="fb-tree"></div>
       <button class="addbtn" data-act="add-root">+ 增加大题</button>
-      <p class="hint">提示：大题可拆成多级小题（如 11（1）、11（2）①/②）；每空长度单位 mm。</p>
+      <p class="hint">大题可拆成多级小题（如 11（1）、11（2）①/②）；行间距同时作用于大题之间与小题之间。每空长度单位 mm。</p>
     `;
 
     const tree = container.querySelector('#fb-tree');

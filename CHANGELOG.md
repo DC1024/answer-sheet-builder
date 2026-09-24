@@ -20,6 +20,12 @@ All notable changes to this project are documented here.
   **Choice column count is now measured at render time** instead of estimated from hard-coded constants.
 
 ### Fixed / 修复
+- **定位点不再压住内容**：定位点此前固定内缩 4mm、而内容区从 7mm 就开始，必然与区块边框 / 横线重叠。现在页内边距由「定位点占用的页边距带」反推（内缩 + 边长 + 1mm 空隙），定位点永远落在页边距内；实测与内容最小间距 1.01mm、重叠面积 0mm²（4mm / 8mm 边长均成立）。
+  **Corner marks no longer overlap content.** They used to sit at a fixed 4mm inset while content started at 7mm, so they inevitably collided with block borders. Page padding is now derived from the band the marks occupy (inset + size + 1mm clearance); measured clearance is 1.01mm with 0mm² overlap (verified at 4mm and 8mm).
+- **考号填涂格可填涂性 / 可读性**：不再用 `12/位数` 硬缩字号，改为**由可用宽度直接反推方框边长**（3–5mm），且相邻间距按格宽自适应（宽格留大间距、紧格贴紧排）。实测提升：A3 16 位 3.25→**4.18mm**、20 位 2.92→**3.45mm**，8/12 位与 A4 全部顶到 5mm；填涂区只占所需宽度，余量交给右侧手写栏拉满，右侧不再留白。过程中会优先压缩手写栏、仍不够才缩小方框。
+  **Fillability / legibility of the exam-number grid**: the old `12/digits` font shrink is gone. The bubble edge length is now derived from the available width (3–5mm) and the gap adapts to the cell width. Measured gains: A3 16 digits 3.25→**4.18mm**, 20 digits 2.92→**3.45mm**; 8/12 digits and all A4 cases hit the 5mm cap. The grid occupies only the width it needs and the fields column stretches to fill the rest.
+- **属性面板排版**：`每行题数（上限，放不下时自动减少列数以保证每题完整）` 这类长标签会把一行撑成三行，导致同行两个输入框一高一低错位。标签统一精简为一行、说明移入 `hint`，并让两列输入框底部对齐；实测全部标签单行、输入框底部差 0px。
+  **Properties panel layout**: long labels used to wrap to three lines and knock the two inputs in a row out of alignment. Labels are now single-line with the explanation moved to a hint, and inputs in a row are bottom-aligned (measured: all labels single-line, 0px bottom offset).
 - 修复选择题换行逻辑：改为**保证「题号 + 全部选项」在单行内完整排下**，排不下的整题换到下一行 —— 不再出现「某题最后一个选项被挤到第二行」。（A3 双栏 + 4 选项 + 14px 实测由「5 列全部折行」修正为「4 列全部整行」。）
   Fixed choice-question wrapping: a question **always fits entirely on one line**; if it doesn't fit, the whole question moves to the next row — no more "last option squeezed onto line 2". (Verified on A3 two-column, 4 options, 14px: was 5 columns with every question wrapped, now 4 columns with none wrapped.)
 - 修复**选择题「字号 / 对齐」完全失效**（旧版把作答样式存在 `config.style`，与通用样式对象同名冲突，严格模式下抛 `TypeError`）：作答样式改用 `config.mode`，旧模板自动迁移。

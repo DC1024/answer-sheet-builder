@@ -4,25 +4,12 @@
 import { store } from './store.js';
 import { registry } from './registry.js';
 import { mmPx } from './util.js';
-
-// 纸张物理尺寸(mm)
-const DIMS = {
-  A3: { w: 297, h: 420 },
-  A4: { w: 210, h: 297 }
-};
+import { pageGeom, MARK_INSET, COL_GAP_MM } from './geometry.js';
 
 export function renderPreview(el){
-  const { size, orientation } = store.paper;
-  const dim = DIMS[size] || DIMS.A4;
-  let pw = dim.w, ph = dim.h;
-  if (orientation === 'landscape') [pw, ph] = [ph, pw];
-  const isA3 = size === 'A3';
-  const cols = isA3 ? 2 : 1;               // 每面栏数（A3 双栏 / A4 单栏）
-  const padX = 7, padY = 6;                // 页内边距(mm)，与打印 @page margin:0 + .page padding 对应
-  const contentW = pw - padX * 2;
-  const contentH = ph - padY * 2;
-  const colGap = 6;
-  const colW = cols > 1 ? (contentW - colGap) / 2 : contentW;
+  // 几何（含定位点占用的页边距带）统一由 geometry.js 提供，不再本地硬编码
+  const g = pageGeom();
+  const { pw, ph, padX, padY, cols, colW, markStyle, markSize, contentH } = g;
   const mm = mmPx();
   const contentHpx = contentH * mm;
   const marginPx = 6 * mm;                 // .blk margin-bottom
@@ -57,7 +44,7 @@ export function renderPreview(el){
     for (let c = 0; c < cols; c++){
       const col = document.createElement('div');
       col.className = 'col';
-      if (cols > 1) col.style.marginRight = (c < cols - 1 ? colGap + 'mm' : '0');
+      if (cols > 1) col.style.marginRight = (c < cols - 1 ? COL_GAP_MM + 'mm' : '0');
       cur.appendChild(col);
       cur._cols.push(col);
     }
@@ -92,10 +79,12 @@ export function renderPreview(el){
   meas.remove();
 
   // 2.5) 定位点：每一面（.page 卡片）只要有题目内容，就在四角补定位点；
-  //      空白面不加。绝对定位，不参与排版流，因此不影响分页测量。
-  const markStyle = store.paper.marks || 'none';
-  const markSize = Math.max(1, Math.min(12, +(store.paper.markSize || 4)));
+  //      空白面不加。绝对定位在「页边距带」内，不参与排版流、不覆盖内容。
   if (markStyle !== 'none'){
+    const CORNER = {
+      tl: ['top', 'left'], tr: ['top', 'right'],
+      bl: ['bottom', 'left'], br: ['bottom', 'right']
+    };
     for (const p of pages){
       if (!p._cols.some(c => c.children.length > 0)) continue; // 空面跳过
       for (const pos of ['tl', 'tr', 'bl', 'br']){
@@ -103,6 +92,8 @@ export function renderPreview(el){
         m.className = 'cmark' + (markStyle === 'triangle' ? ' tri' : '') + ' ' + pos;
         m.style.width = markSize + 'mm';
         m.style.height = markSize + 'mm';
+        m.style[CORNER[pos][0]] = MARK_INSET + 'mm';
+        m.style[CORNER[pos][1]] = MARK_INSET + 'mm';
         p.appendChild(m);
       }
     }
