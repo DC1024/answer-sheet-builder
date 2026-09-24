@@ -181,7 +181,10 @@ function bindToolbar(){
   orientSel.addEventListener('change', e => { store.paper.orientation = e.target.value; applyPaper(); renderPreviewAndGuides(); });
 
   document.getElementById('btn-print').addEventListener('click', () => window.print());
-  document.getElementById('btn-save').addEventListener('click', () => { store.save(); alert('已保存到本地浏览器（localStorage）。'); });
+  document.getElementById('btn-save').addEventListener('click', () => {
+    if (store.save()) alert('已保存到本地浏览器（localStorage）。图片会一并保存在本地缓存中。');
+    else alert('保存失败：本地浏览器缓存空间不足（通常是图片过大或过多）。\n建议：减少图片数量、调小图片宽度，或先「导出 JSON」备份后再清理。');
+  });
   document.getElementById('btn-load').addEventListener('click', () => {
     if (store.load()){ applyPaper(); fullRender(); alert('已载入本地保存的模板。'); }
     else alert('没有找到本地保存的模板。');

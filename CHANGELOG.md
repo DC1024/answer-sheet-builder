@@ -3,6 +3,22 @@
 All notable changes to this project are documented here.
 本项目所有重要变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布] / [Unreleased]
+
+### Added / 新增
+- 新增「图片」题型：可插入图片并调整**宽度与对齐**；上传时在本机自动压缩，**仅存浏览器缓存（localStorage）**，不上传、不增加服务器压力；打印 / 导出 PDF 时正常显示。
+  New "Image" block: insert images with adjustable **width and alignment**; compressed locally on upload and stored **only in the browser (localStorage)** — no server load; renders in print / PDF.
+- 考号填涂区改为**中括号方块**样式，与选择题填涂风格统一。
+  Exam-number grid now uses **bracket squares**, consistent with choice bubbling.
+
+### Fixed / 修复
+- 修复「通用样式」中**调整字号无反应**：子元素改用 `em`，随 `.blk` 字号整体缩放。
+  Fixed **font-size having no effect**: children now use `em` and scale with the block's font size.
+- 修复**考生信息栏对齐（左 / 中 / 右）无反应**：对齐同时驱动 flex 容器的 `justify/align`。
+  Fixed **student-info alignment (left / center / right) having no effect**: alignment now drives the flex containers too.
+- 修复填空题**小题与小题之间（如 11（1）与（2）之间）行间距无效**：小题换行后按「行间距」拉开。
+  Fixed **row spacing between sub-questions (e.g. 11(1) vs (2))** having no effect: wrapped sub-questions now honor the row-spacing value.
+
 ## [1.0.0] - 2026-09-24
 
 首个正式版本。The first stable release.

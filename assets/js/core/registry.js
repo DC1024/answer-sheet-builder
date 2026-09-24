@@ -3,9 +3,10 @@ import info from '../blocks/info.js';
 import singleChoice from '../blocks/singleChoice.js';
 import fillBlank from '../blocks/fillBlank.js';
 import answer from '../blocks/answer.js';
+import image from '../blocks/image.js';
 import custom from '../blocks/custom.js';
 
-const modules = [info, singleChoice, fillBlank, answer, custom];
+const modules = [info, singleChoice, fillBlank, answer, image, custom];
 
 export const registry = {
   all: modules,

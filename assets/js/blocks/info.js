@@ -91,7 +91,7 @@ export default {
     let head = '<tr><th></th>' + Array.from({ length: n }, (_, i) => `<th class="pos">${i + 1}</th>`).join('') + '</tr>';
     let rows = '';
     for (let d = 0; d <= 9; d++){
-      rows += `<tr><td class="pos">${d}</td>` + Array.from({ length: n }, () => `<td><span class="circ"></span></td>`).join('') + '</tr>';
+      rows += `<tr><td class="pos">${d}</td>` + Array.from({ length: n }, () => `<td><span class="ebrk"></span></td>`).join('') + '</tr>';
     }
     return `<div class="exam-grid"><div class="eg-title">考号填涂区（用 2B 铅笔填涂对应数字）</div>
       <table>${head}${rows}</table></div>`;

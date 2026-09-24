@@ -90,7 +90,7 @@ export default {
     const start = Math.max(1, +config.startNo || 1);
     const gap = Math.max(2, parseInt(config.gap) || 6);
     const html = config.questions.map((q, i) =>
-      `<div class="fill-q" style="margin:0 0 ${gap}mm">${renderNode(q, start + i, 0)}</div>`
+      `<div class="fill-q">${renderNode(q, start + i, 0, gap)}</div>`
     ).join('');
     return `<div class="blk" style="${commonStyle(config)};--fg:${gap}mm"><div class="blk-title">${esc(config.title)}</div>${html}</div>`;
   }
@@ -169,9 +169,10 @@ function buildNode(node, depth, index, onChange, removeSelf, rerender){
   return card;
 }
 
-// 递归渲染预览节点（返回内联内容，外层由 render 包成 .fill-q 块，便于统一行间距）
+// 递归渲染预览节点（返回内联内容，外层由 render 包成 .fill-q 块）
 // item 3：顶层大题的第一个小题紧跟题号内联，其余小题（如（2））才换行；更深层级（① ②）一律内联。
-function renderNode(node, autoNo, depth = 0){
+// item 5：顶层大题内部，各小题换行后按「行间距」拉开（修复：小题与小题之间行间距无效）。
+function renderNode(node, autoNo, depth = 0, gap = 6){
   const label = node.label || (depth === 0 ? (autoNo + '.') : '');
   const tag = label ? `<b>${esc(label)}</b>` : '';
 
@@ -181,12 +182,16 @@ function renderNode(node, autoNo, depth = 0){
     return `${tag} ${blanks}`;
   }
 
-  // 含小题
   if (depth === 0){
-    // 第一小题内联，其余小题前加换行
-    const inner = node.subs.map((s, idx) => (idx === 0 ? '' : '<br>') + renderNode(s, null, depth + 1)).join('');
-    return `${tag}${inner}`;
+    // 顶层大题：第一小题内联，其余小题各自成行并按行间距拉开
+    const parts = node.subs.map((s, idx) =>
+      idx === 0
+        ? renderNode(s, null, 1, gap)
+        : `<div class="sub-line" style="margin-top:${gap}mm">${renderNode(s, null, 1, gap)}</div>`
+    ).join('');
+    return `${tag}${parts}`;
   }
-  const inner = node.subs.map(s => renderNode(s, null, depth + 1)).join(' ');
+  // 更深层级（如（2）下的 ① ②）：全部内联
+  const inner = node.subs.map(s => renderNode(s, null, depth + 1, gap)).join(' ');
   return `${tag}${inner}`;
 }

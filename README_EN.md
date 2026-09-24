@@ -36,7 +36,8 @@ your machine — everything runs in the browser. Package it as a Docker image to
 | 🔤 **Bubble or handwritten** | Choice questions support **bracketed `[A]` bubbling** or **handwritten lines**; columns **auto-fit** the paper width so nothing overflows. |
 | ✎ **Nested blank items** | Supports nested items like `11(1)`, `11(2)①/②`; the first sub-item stays inline with the question number, the rest wrap. Each blank's **length** and **row spacing** are adjustable. |
 | 📐 **Ruled answer areas** | Free-response areas can be **blank** or **ruled** with equal spacing; **line gap** and **box height** are configurable. |
-| 🪪 **Student info bar** | Add/remove handwritten fields (class / name / exam number); enabling the **exam-number bubble grid** arranges the fields to its right to save space. |
+| 🪪 **Student info bar** | Add/remove handwritten fields (class / name / exam number); the **exam-number grid** uses **bracket squares** and arranges the fields to its right to save space. |
+| 🖼 **Images** | Insert images and adjust **width (%) and alignment (left / center / right)**; compressed on upload and stored **only in the browser** — no server — and they appear in print / PDF output. |
 | ⬛ **Uniform black borders** | Every question block has a black border for a clear, print-friendly layout. |
 | 🎛 **Common styling** | Per-module **font size** and **alignment** (left / center / right). |
 | 💾 **Reusable templates** | Save / load locally (localStorage); import / export **JSON** templates. |
@@ -103,6 +104,7 @@ answer-sheet-builder/
 │           ├── singleChoice.js
 │           ├── fillBlank.js
 │           ├── answer.js
+│           ├── image.js
 │           └── custom.js
 ├── LICENSE
 ├── CHANGELOG.md
