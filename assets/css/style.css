@@ -168,7 +168,13 @@ button:disabled:hover{background:#f3f5f8;}
 
 /* 选择题 填涂/手写 */
 /* row-gap 由 --hg 驱动（选择题的「行间距」设置，默认 1mm ≈ 原来的 4px） */
-.sc-grid{display:grid;gap:var(--hg,4px) 12px;align-items:start;}
+/* 行间距 --hg 同时决定「行与行」和「标题与第一行」的间距：
+   grid 的 row-gap 只作用在行与行之间，第一行之前不会自动加 ——
+   所以这里补上 padding-top（用 padding 而非 margin，避免与 .blk-title 的
+   margin-bottom 发生外边距折叠）。-4px 抵消 .scq 自身的 2px 上下内边距，
+   使「标题→第一行」与「行→行」的内容间隙相等。 */
+.sc-grid{display:grid;gap:var(--hg,4px) 12px;align-items:start;
+  padding-top:max(0px, calc(var(--hg,4px) - 4px));}
 /* 题号与选项分离：选项在 .opts 内自动换行，第 2 行起对齐到第一个选项下方 */
 .scq{display:flex;align-items:flex-start;gap:5px;padding:2px 0;min-width:0;}
 .scq .scn{font-weight:800;min-width:1.6em;flex:0 0 auto;}
