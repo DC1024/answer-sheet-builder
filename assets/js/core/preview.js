@@ -27,6 +27,13 @@ export function renderPreview(el){
       try { wrap.innerHTML = mod.render(b.config); }
       catch(e){ wrap.innerHTML = `<div class="blk" style="color:#c0392b">[渲染错误:${b.type}]</div>`; }
     }
+    // 解答题：给每题的作答区标上「所属模块 + 题序」，供预览里的拖动把手定位
+    if (mod && b.type === 'answer'){
+      wrap.querySelectorAll('.ans-box .ab').forEach((ab, i) => {
+        ab.dataset.blk = b.id;
+        ab.dataset.qi = i;
+      });
+    }
     meas.appendChild(wrap);
     return wrap.firstElementChild; // 真实 .blk 元素
   });
@@ -104,4 +111,12 @@ export function renderPreview(el){
   // 3) 输出
   el.innerHTML = '';
   pages.forEach(p => el.appendChild(p));
+  // 3.5) 解答题作答区：加「拖动调高度」把手（绝对定位，不参与排版，故不影响分页测量）
+  el.querySelectorAll('.ans-box .ab[data-blk]').forEach(ab => {
+    const grip = document.createElement('div');
+    grip.className = 'rz-grip';
+    grip.title = '拖动调整本题作答区高度';
+    grip.innerHTML = '<span class="rz-bar"></span><span class="rz-tag"></span>';
+    ab.appendChild(grip);
+  });
 }

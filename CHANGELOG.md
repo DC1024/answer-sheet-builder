@@ -6,6 +6,8 @@ All notable changes to this project are documented here.
 ## [未发布] / [Unreleased]
 
 ### Added / 新增
+- **解答题作答区可直接拖动调高度**：预览区每题作答区的下边缘有拖动把手（悬停出现蓝条），按住上下拖即**实时**改变高度（把手同步显示当前 mm 数，40–400mm 自动夹取）；松手才写入配置并记为一个撤销点，属性面板数字同步更新。拖动过程不重渲染（重渲染会把把手从指针下抽走），打印 / 导出 PDF 时把手自动隐藏。
+  **Drag the bottom edge of a free-response answer area in the preview** to resize it live — the grip shows the current mm value while dragging (clamped 40–400mm); the value is committed on release as one undo step and the properties panel stays in sync. The grip is hidden in print / PDF.
 - **撤销 / 重做**：快照式历史（最多 100 步），连续输入会按 0.7s 时间窗合并为一步；工具栏 `↶ 撤销 / ↷ 重做`（无历史时置灰），快捷键 **Ctrl+Z / Ctrl+Y（或 Ctrl+Shift+Z）**。
   **Undo / redo**: snapshot history (up to 100 steps) with a 0.7s coalescing window for continuous typing; toolbar buttons grey out when unavailable; **Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z)**.
 - **复制 / 剪切 / 粘贴**：**Ctrl+C / Ctrl+X / Ctrl+V** 复制选定模块到应用内剪贴板并插到其后；剪贴板里是模块 JSON 时也能直接粘贴；选中「图片」模块时 **Ctrl+V 可直接粘贴剪贴板中的图片**（本机压缩后存储）。文本框内一律让给浏览器原生行为，不劫持。

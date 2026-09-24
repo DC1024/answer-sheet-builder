@@ -193,7 +193,7 @@ button:disabled:hover{background:#f3f5f8;}
 /* item 1：每题可插入图片（题干图），置于作答区上方 */
 .ans-box .ans-img{padding:5px 10px;}
 .ans-box .ans-img + .ab{border-top:1px dashed #cbd3dc;}
-.ans-box .ab{display:block;}
+.ans-box .ab{display:block;position:relative;}
 /* 横线样式（item 4）：在作答区内画等距横线，间距由 --lg 控制（item 5） */
 .ans-box .ab.lined{
   background-image:repeating-linear-gradient(to bottom,
@@ -202,6 +202,30 @@ button:disabled:hover{background:#f3f5f8;}
     #cdd5df calc(var(--lg,8mm) - 1px),
     #cdd5df var(--lg,8mm));
 }
+
+/* 作答区「拖动调高度」把手：绝对定位贴在作答区下边缘，不占高度、不影响分页测量。
+   拖动中只改 DOM height（实时反馈），松手才写回 config（一次拖动 = 一个撤销点）。 */
+.rz-grip{
+  position:absolute;left:0;right:0;bottom:0;height:12px;
+  display:flex;align-items:center;justify-content:center;
+  cursor:ns-resize;touch-action:none;z-index:5;
+}
+.rz-grip .rz-bar{
+  width:46px;height:3px;border-radius:2px;background:#2b6cb0;
+  opacity:0;transition:opacity .12s ease;
+}
+.rz-grip:hover .rz-bar{opacity:.85;}
+.rz-grip:hover{background:rgba(43,108,176,.06);}
+.rz-grip.on{background:rgba(43,108,176,.10);}
+.rz-grip.on .rz-bar{opacity:1;}
+.rz-grip .rz-tag{
+  margin-left:8px;font-size:11px;color:#1c4e80;background:#fff;
+  border:1px solid #cfe2f5;border-radius:10px;padding:1px 7px;
+  opacity:0;transition:opacity .12s ease;white-space:nowrap;
+}
+.rz-grip.on .rz-tag{opacity:1;}
+/* 拖动过程中禁止选中文字，光标统一为上下拉伸 */
+body.rz-drag{user-select:none;-webkit-user-select:none;cursor:ns-resize;}
 
 /* 自定义（边框由外层 .blk 统一提供） */
 .custom-box{border:none;border-radius:4px;padding:0;break-inside:avoid;}
@@ -226,4 +250,7 @@ button:disabled:hover{background:#f3f5f8;}
   /* 每面固定尺寸卡片 => 每页打印一张，自动双面顺序（item 2） */
   .page{box-shadow:none;margin:0;break-after:page;page-break-after:always;}
   .blk,.ans-box,.custom-box,.info-box{break-inside:avoid;}
+  /* 拖动把手只是编辑辅助，绝不能出现在打印 / PDF 上 */
+  .rz-grip{display:none !important;}
+  #toast{display:none !important;}
 }

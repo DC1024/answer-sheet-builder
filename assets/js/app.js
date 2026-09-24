@@ -2,7 +2,7 @@
 import { store } from './core/store.js';
 import { registry } from './core/registry.js';
 import { renderPreview } from './core/preview.js';
-import { uid, deepClone, compressImage } from './core/util.js';
+import { uid, deepClone, compressImage, mmPx } from './core/util.js';
 
 let dragId = null;
 let dropTarget = null;
@@ -307,6 +307,66 @@ function syncPaperControls(){
   if (markSizeIn) markSizeIn.value = store.paper.markSize || 4;
 }
 
+/* ---------- 预览内直接拖动解答题作答区的下边缘调高度 ---------- */
+// 拖动过程只改 DOM 的 height（不重渲染），松手才写回 config 并记一个撤销点 ——
+// 重渲染会换掉 DOM 节点，拖动中重渲染等于把把手从指针下抽走。
+const ANSWER_H_MIN = 40, ANSWER_H_MAX = 400;
+let rzState = null;
+
+function bindResizers(){
+  const sheet = document.getElementById('sheet');
+
+  // 事件委托：把手每次重渲染都会重建，委托到常驻的 #sheet 上只绑一次
+  sheet.addEventListener('pointerdown', e => {
+    if (e.button > 0) return;
+    const grip = e.target.closest && e.target.closest('.rz-grip');
+    if (!grip) return;
+    const ab = grip.closest('.ab');
+    if (!ab) return;
+    const b = store.getBlock(ab.dataset.blk);
+    const qi = parseInt(ab.dataset.qi, 10);
+    if (!b || !b.config.questions || !b.config.questions[qi]) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    const startH = Math.max(ANSWER_H_MIN, Math.min(ANSWER_H_MAX, +b.config.questions[qi].h || 120));
+    rzState = { grip, ab, id: b.id, qi, startY: e.clientY, startH, h: startH };
+    document.body.classList.add('rz-drag');
+    grip.classList.add('on');
+    const tag = grip.querySelector('.rz-tag');
+    if (tag) tag.textContent = Math.round(startH) + 'mm';
+  });
+
+  window.addEventListener('pointermove', e => {
+    const s = rzState;
+    if (!s) return;
+    // 1 CSS px = 1/mmPx() mm（预览区 1:1 显示，无缩放变换）
+    const h = Math.max(ANSWER_H_MIN, Math.min(ANSWER_H_MAX, s.startH + (e.clientY - s.startY) / mmPx()));
+    s.h = h;
+    s.ab.style.height = h.toFixed(1) + 'mm';
+    const tag = s.grip.querySelector('.rz-tag');
+    if (tag) tag.textContent = Math.round(h) + 'mm';
+  });
+
+  const end = () => {
+    const s = rzState;
+    if (!s) return;
+    const b = store.getBlock(s.id);
+    rzState = null;
+    document.body.classList.remove('rz-drag');
+    s.grip.classList.remove('on');
+    if (b && b.config.questions[s.qi]){
+      b.config.questions[s.qi].h = Math.round(s.h);   // 整数 mm，与属性面板一致
+      store.selectedId = s.id;
+      store.commit('resize:' + s.id + ':' + s.qi);    // 一次拖动 = 一个撤销点
+      fullRender();
+      toast(`第 ${s.qi + 1} 题作答区高度 ${Math.round(s.h)}mm`);
+    }
+  };
+  window.addEventListener('pointerup', end);
+  window.addEventListener('pointercancel', end);
+}
+
 /* ---------- 全量渲染 ---------- */
 function fullRender(){
   syncPaperControls();
@@ -378,6 +438,7 @@ function init(){
   renderPalette();
   bindToolbar();
   bindShortcuts();
+  bindResizers();
   fullRender();
   store.subscribe(fullRender);
   window.addEventListener('resize', renderPreviewAndGuides);

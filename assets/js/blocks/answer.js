@@ -37,7 +37,7 @@ export default {
       <label>横线间距(mm)
         <input type="number" min="4" max="20" data-k="lineGap" value="${config.lineGap ?? 8}">
       </label>
-      <p class="hint">横线间距仅在「横线」样式下生效。每题的「作答区高度」单位 mm。每题可选插一张图片（题干图），上传即本地压缩、仅存浏览器缓存。</p>
+      <p class="hint">横线间距仅在「横线」样式下生效。每题的「作答区高度」单位 mm（40–400）——<b>也可以直接在右侧预览区拖动作答区的下边缘实时调整</b>。每题可选插一张图片（题干图），上传即本地压缩、仅存浏览器缓存。</p>
       <div class="qlist" id="ans-list"></div>
       <button class="addbtn" data-act="add">+ 增加一题</button>
     `;
