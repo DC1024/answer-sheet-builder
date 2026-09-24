@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.
 本项目所有重要变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布] / [Unreleased]
+## [1.0.1] - 2026-09-25
 
 ### Added / 新增
 - **解答题图片直接贴进作答区**：选中解答题模块后，把鼠标停在预览区某个作答区上按 **Ctrl+V**，图片即贴进该题（点选作答区也可以，属性面板同步高亮该题卡；未悬停时贴到第 1 题）。图片**叠加在作答区内** —— 绝对定位、不占高度、不挤压横线，学生照常在旁边书写；**九宫格定位**（左上/上中/右上/左中/居中/右中/左下/下中/右下）+ 图片宽（%）可调；超出作答区的部分自动裁切，绝不溢出到下一题。「当前题」在预览区有细蓝框 + 角标提示，打印 / PDF 时不输出。
@@ -99,4 +99,5 @@ All notable changes to this project are documented here.
 - Docker 部署（`Dockerfile` + `docker-compose.yml`），纯静态无需后端。
   Docker deployment; pure static, no backend.
 
+[1.0.1]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.1
 [1.0.0]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.0
