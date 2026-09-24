@@ -9,7 +9,7 @@
   <a href="https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.0"><img alt="version" src="https://img.shields.io/badge/version-1.0.0-blue"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="no backend" src="https://img.shields.io/badge/backend-none-success">
-  <img alt="docker" src="https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white">
+  <a href="https://github.com/DC1024/answer-sheet-builder/actions/workflows/docker.yml"><img alt="docker build" src="https://github.com/DC1024/answer-sheet-builder/actions/workflows/docker.yml/badge.svg"></a>
   <a href="https://github.com/DC1024/answer-sheet-builder/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/DC1024/answer-sheet-builder?style=social"></a>
 </p>
 
@@ -84,6 +84,19 @@ cd answer-sheet-builder
 python3 -m http.server 8080
 # 浏览器打开 http://localhost:8080/app.html
 ```
+
+### 方式三：拉取预构建镜像（GHCR）
+
+CI 会在每次推送 `main` 或打 `v*` 标签时**自动构建并推送镜像**到 GitHub Container Registry：
+
+```bash
+docker pull ghcr.io/dc1024/answer-sheet-builder:latest
+docker run -d --name asb -p 8080:80 ghcr.io/dc1024/answer-sheet-builder:latest
+# 打开 http://<服务器IP>:8080
+```
+
+> 镜像名全小写：`ghcr.io/dc1024/answer-sheet-builder`。标签包含 `latest`、分支名、`v1.2.3` / `1.2`、以及 `sha-xxxxxxx`。
+> 若拉取提示无权限，请在仓库 **Packages** 里把该包可见性设为 Public（首次推送后生效）。
 
 ## 使用步骤
 

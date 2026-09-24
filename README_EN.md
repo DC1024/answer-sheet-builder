@@ -9,7 +9,7 @@
   <a href="https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.0"><img alt="version" src="https://img.shields.io/badge/version-1.0.0-blue"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="no backend" src="https://img.shields.io/badge/backend-none-success">
-  <img alt="docker" src="https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white">
+  <a href="https://github.com/DC1024/answer-sheet-builder/actions/workflows/docker.yml"><img alt="docker build" src="https://github.com/DC1024/answer-sheet-builder/actions/workflows/docker.yml/badge.svg"></a>
   <a href="https://github.com/DC1024/answer-sheet-builder/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/DC1024/answer-sheet-builder?style=social"></a>
 </p>
 
@@ -73,6 +73,22 @@ cd answer-sheet-builder
 python3 -m http.server 8080
 # open http://localhost:8080/app.html
 ```
+
+### Option 3 — Pull the prebuilt image (GHCR)
+
+CI **builds and pushes the image automatically** to the GitHub Container Registry on every push
+to `main` or `v*` tag:
+
+```bash
+docker pull ghcr.io/dc1024/answer-sheet-builder:latest
+docker run -d --name asb -p 8080:80 ghcr.io/dc1024/answer-sheet-builder:latest
+# open http://<server-ip>:8080
+```
+
+> The image name is fully lowercase: `ghcr.io/dc1024/answer-sheet-builder`. Tags include `latest`,
+> the branch name, `v1.2.3` / `1.2`, and `sha-xxxxxxx`.
+> If pulling is denied, set the package visibility to Public under the repository **Packages** tab
+> (effective after the first push).
 
 ## How to Use
 
