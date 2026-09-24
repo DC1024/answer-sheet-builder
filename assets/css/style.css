@@ -215,7 +215,7 @@ button:disabled:hover{background:#f3f5f8;}
 /* item 1：每题可插入图片（题干图），置于作答区上方 */
 .ans-box .ans-img{padding:5px 10px;}
 .ans-box .ans-img + .ab{border-top:1px dashed #cbd3dc;}
-.ans-box .ab{display:block;position:relative;}
+.ans-box .ab{display:block;position:relative;overflow:hidden;}
 /* 横线样式（item 4）：在作答区内画等距横线，间距由 --lg 控制（item 5） */
 .ans-box .ab.lined{
   background-image:repeating-linear-gradient(to bottom,
@@ -225,22 +225,25 @@ button:disabled:hover{background:#f3f5f8;}
     #cdd5df var(--lg,8mm));
 }
 
-/* 作答区内的叠加图片：绝对定位、不占高度、不挤压横线（学生可照常在旁边书写）。
-   宽高上限都是 100%，超出作答区的部分自动裁切，绝不溢出到下一题。位置由九宫格 class 决定。 */
+/* 作答区内的叠加图片：定位层铺满整个作答区（inset:0），flex 九宫格对齐，
+   图片宽度 % + max-height:100%（此时 100% = 作答区高度，解析稳定）。
+   不用 transform 定位 —— transform 元素在打印管线里的裁切/定位不可靠
+   （实测：屏幕预览裁切正常，Ctrl+P 打印预览里图片会压过边框）。
+   兜底：.ab 自带 overflow:hidden，任何媒体下图片都绝不越过作答区边框。 */
 .ans-box .ans-ov{
-  position:absolute;z-index:2;pointer-events:none;
-  max-width:100%;max-height:100%;overflow:hidden;
+  position:absolute;inset:0;z-index:2;pointer-events:none;
+  display:flex;min-height:0;
 }
-.ans-box .ans-ov img{display:block;width:100%;height:auto;}
-.ans-box .ans-ov.pos-tl{top:0;left:0;}
-.ans-box .ans-ov.pos-tc{top:0;left:50%;transform:translateX(-50%);}
-.ans-box .ans-ov.pos-tr{top:0;right:0;}
-.ans-box .ans-ov.pos-ml{top:50%;left:0;transform:translateY(-50%);}
-.ans-box .ans-ov.pos-mc{top:50%;left:50%;transform:translate(-50%,-50%);}
-.ans-box .ans-ov.pos-mr{top:50%;right:0;transform:translateY(-50%);}
-.ans-box .ans-ov.pos-bl{bottom:0;left:0;}
-.ans-box .ans-ov.pos-bc{bottom:0;left:50%;transform:translateX(-50%);}
-.ans-box .ans-ov.pos-br{bottom:0;right:0;}
+.ans-box .ans-ov img{display:block;height:auto;max-height:100%;object-fit:contain;}
+.ans-box .ans-ov.pos-tl{align-items:flex-start;justify-content:flex-start;}
+.ans-box .ans-ov.pos-tc{align-items:flex-start;justify-content:center;}
+.ans-box .ans-ov.pos-tr{align-items:flex-start;justify-content:flex-end;}
+.ans-box .ans-ov.pos-ml{align-items:center;justify-content:flex-start;}
+.ans-box .ans-ov.pos-mc{align-items:center;justify-content:center;}
+.ans-box .ans-ov.pos-mr{align-items:center;justify-content:flex-end;}
+.ans-box .ans-ov.pos-bl{align-items:flex-end;justify-content:flex-start;}
+.ans-box .ans-ov.pos-bc{align-items:flex-end;justify-content:center;}
+.ans-box .ans-ov.pos-br{align-items:flex-end;justify-content:flex-end;}
 /* 当前指向的作答区（Ctrl+V 贴图目标）：细蓝框提示，仅编辑态可见，打印时不输出 */
 .ans-box .ab.on{outline:2px solid #2b6cb0;outline-offset:-2px;}
 .ans-box .ab.on::after{

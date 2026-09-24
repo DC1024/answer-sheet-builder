@@ -155,9 +155,10 @@ export default {
       const abStyle = `height:${h}mm;` + (lined ? `--lg:${lg}mm` : '');
       const imgW = Math.max(5, Math.min(100, +q.imgW || 60));
       const pos = clampPos(q.imgPos);
-      // 图片叠加在作答区内：绝对定位、不占高度、不挤压横线，超出部分按作答区裁切
+      // 图片叠加在作答区内：定位层铺满盒子、flex 九宫格对齐；宽度 % 放在 img 上，
+      // max-height:100% 由 CSS 解析（= 作答区高度），超出部分由 .ab 的 overflow:hidden 裁切
       const imgHtml = q.img
-        ? `<div class="ans-ov pos-${pos}" style="width:${imgW}%;${(+q.ratio > 0) ? `aspect-ratio:${q.ratio};` : ''}"><img src="${q.img}" alt=""></div>`
+        ? `<div class="ans-ov pos-${pos}"><img src="${q.img}" style="width:${imgW}%;${(+q.ratio > 0) ? `aspect-ratio:${q.ratio};` : ''}"></div>`
         : '';
       return `<div class="ans-box">
         <div class="ah">${start + i}.</div><div class="${abCls}" style="${abStyle}">${imgHtml}</div></div>`;
