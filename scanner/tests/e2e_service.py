@@ -156,7 +156,7 @@ def main():
     print('\n=== C. 班级统计 ===')
     # 用 s01 当标准答案：s01/s05 的作答相同 → 两者都该满分
     key = ' '.join(f'{int(no)}{a}' for no, a in
-                   sorted(expected['s01'].items(), key=lambda kv: int(kv[0])) if a)
+                   sorted((expected['s01'].get('answers') or {}).items(), key=lambda kv: int(kv[0])) if a)
     print('     标准答案:', key)
     st, sm = req('POST', '/api/stats', json_body={'key': key, 'ids': ids_scan})
     check(st == 200, '统计接口 200', f'HTTP {st}')
@@ -247,6 +247,15 @@ def main():
           '提示名单里没交卷的人', warns[:120])
     check('不在名单里' in warns, '提示有考号不在名单里', warns[:120])
 
+    # 卷面考号：容器里跑出来的必须和真容器外一致 —— 这条只有真容器能证明（opencv 版本不同）
+    check(all((p.get('sid') or {}).get('text') == s['sid']
+              for s in stus for p in s['pages'] if p.get('ok')),
+          '每一面都从卷面上读到了考号，且与归组结果一致',
+          str([(s['sid'], [((p.get('sid') or {}).get('text')) for p in s['pages']]) for s in stus[:2]]))
+    check(all(s.get('sidSource') == 'both' for s in stus),
+          '目录名里的考号与卷面涂的一致 → 互证',
+          str([(s['sid'], s.get('sidSource')) for s in stus]))
+
     # 答案正确性：批量路径的答案必须和单张路径一模一样
     SID2FIX = {'2026010234': 's01', '2026010235': 's02',
                '2026010236': 's03', '2026010237': 's04'}
@@ -314,8 +323,9 @@ def main():
 
     st, rc = req('GET', '/api/roster.csv', raw=True)
     rl = [l for l in rc.decode('utf-8-sig').strip().splitlines() if l.strip()]
-    check(rl[0] == '考号,姓名,班级,页数,备注', '名单对账表头正确', rl[0])
+    check(rl[0] == '考号,姓名,班级,考号来源,页数,说明,备注', '名单对账表头正确（带考号来源）', rl[0])
     check(len(rl) == 5, '名单对账 4 人', f'实测 {len(rl)}')
+    check('卷面' in rc.decode('utf-8-sig'), '对账表写明考号是卷面读到的还是文件名里的', rl[1][:100])
 
     print('\n=== H. 页序越界必须报错（不能静默夹到最后一页）===')
     # 模板只有 1 面；给同一考号两张图 → 第二张会被排成第 2 面
