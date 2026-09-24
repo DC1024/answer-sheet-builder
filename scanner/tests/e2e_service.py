@@ -23,6 +23,25 @@ BASE = os.environ.get('BASE', 'http://127.0.0.1:8081').rstrip('/')
 FIX = _fixtures.FIX
 FAILS = []
 
+# 会话 cookie（扫描服务走服务端会话，token 只通过 Set-Cookie 下发，
+# 不在 JSON 里回传 —— 所以客户端得自己维护 cookie 罐）。
+COOKIES = {}
+E2E_USER = os.environ.get('ASB_E2E_USER', 'e2e_admin')
+E2E_PASS = os.environ.get('ASB_E2E_PASS', 'e2e_admin_' + os.urandom(6).hex())
+
+
+def _store_cookies(resp):
+    """从响应头里收下 Set-Cookie（成功响应或 HTTPError 都可能有）。"""
+    for sc in (resp.headers.get_all('Set-Cookie') or []):
+        head = sc.split(';', 1)[0]
+        if '=' in head:
+            k, v = head.split('=', 1)
+            COOKIES[k.strip()] = v.strip()
+
+
+def _cookie_header():
+    return '; '.join(f'{k}={v}' for k, v in COOKIES.items()) or None
+
 
 def check(ok_, label, extra=''):
     print(('  ✅ ' if ok_ else '  ❌ ') + label + (f'  {extra}' if extra else ''))
@@ -54,6 +73,9 @@ def _mp(fields, files):
 def req(method, path, fields=None, files=None, json_body=None, raw=False):
     url = BASE + path
     headers = {}
+    ch = _cookie_header()
+    if ch:
+        headers['Cookie'] = ch
     if json_body is not None:
         data = json.dumps(json_body).encode('utf-8')
         headers['Content-Type'] = 'application/json'
@@ -65,14 +87,37 @@ def req(method, path, fields=None, files=None, json_body=None, raw=False):
     r = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(r, timeout=300) as resp:
+            _store_cookies(resp)
             body = resp.read()
             return resp.status, (body if raw else json.loads(body or b'null'))
     except urllib.error.HTTPError as e:
+        _store_cookies(e)
         body = e.read()
         try:
             return e.code, json.loads(body or b'null')
         except Exception:
             return e.code, body
+
+
+def _auth_bootstrap():
+    """服务现在要登录。先问 /api/me：
+    - 已经有有效会话（罐里有 cookie 且服务端认）→ 直接走；
+    - 库是空的（needSetup）→ /api/setup 创建第一个管理员；
+    - 库里有人但本进程没会话 → /api/login 用同一套凭据登录。
+    凭据固定写在 ASB_E2E_USER / ASB_E2E_PASS（默认随机口令，首次 setup 即生效）。"""
+    st, me = req('GET', '/api/me')
+    if st == 200 and me.get('user'):
+        return True
+    if st == 200 and me.get('needSetup'):
+        st, j = req('POST', '/api/setup',
+                    json_body={'username': E2E_USER, 'password': E2E_PASS, 'display': 'e2e'})
+        check(st == 200 and j.get('ok'), '首次启动创建管理员（/api/setup）', f'HTTP {st} {str(j)[:80]}')
+        return st == 200
+    # 已初始化但没会话：用同一套凭据登录（这套凭据就是本脚本之前 setup 出来的）
+    st, j = req('POST', '/api/login',
+                json_body={'username': E2E_USER, 'password': E2E_PASS})
+    check(st == 200 and j.get('ok'), '已初始化 → 登录（/api/login）', f'HTTP {st} {str(j)[:80]}')
+    return st == 200
 
 
 def main():
@@ -81,13 +126,16 @@ def main():
 
     print(f'=== 0. 连通性 {BASE} ===')
     try:
-        st, _ = req('GET', '/api/template')
-        check(st == 200, 'GET /api/template 返回 200', f'HTTP {st}')
-        st, _ = req('GET', '/', raw=True)
-        check(st == 200, 'GET / 页面可达', f'HTTP {st}')
+        st, h = req('GET', '/api/health')
+        check(st == 200 and h.get('ok'), 'GET /api/health 返回 200', f'HTTP {st} {h}')
     except Exception as e:
         print('  ❌ 连不上：', e)
         return 1
+    if not _auth_bootstrap():
+        print('  ❌ 鉴权引导失败，无法继续')
+        return 1
+    st, _ = req('GET', '/', raw=True)
+    check(st == 200, 'GET / 页面可达（已登录）', f'HTTP {st}')
 
     print('\n=== 1. 上传阅卷模板 ===')
     tpl_bytes = open(os.path.join(FIX, 'template.json'), 'rb').read()

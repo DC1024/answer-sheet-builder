@@ -27,6 +27,16 @@ class OmrError(Exception):
     pass
 
 
+def _qno(v):
+    """题号尽量转 int；实在转不了就原样留着（别为一个怪题号让整份模板载不进来）。"""
+    if isinstance(v, bool) or v is None:
+        return v
+    try:
+        return int(str(v).strip())
+    except (TypeError, ValueError):
+        return v
+
+
 def load_template(src):
     """src 可以是 JSON 字符串、bytes 或已解析的 dict。
 
@@ -38,6 +48,14 @@ def load_template(src):
         raise OmrError(f'不是有效的阅卷模板（format 应为 {" 或 ".join(FORMAT_READABLE)}）')
     if not tpl.get('pages'):
         raise OmrError('模板里没有任何面（pages 为空）')
+    # 题号在这里就统一成 int —— 它是整条链路的主键类型：
+    # 模板的 q['no']、answers 的键、标准答案的键、stats 的 qnos 全是它。
+    # 不统一的话，混着 int/str 的键会在两处静默出事：sorted() 直接 TypeError，
+    # 以及落库过一遍 JSON 后 answers.get(1) 落空 → 全班 0 分（见 store._load_answers）。
+    for p in tpl['pages']:
+        for q in p.get('questions') or []:
+            if isinstance(q, dict) and 'no' in q:
+                q['no'] = _qno(q['no'])
     return tpl
 
 

@@ -4,31 +4,53 @@
 # 两条识别入口共用同一条识别路径（_recognize_bytes）：
 #   POST /api/scan    单张 / 少量图片，来一批识别一批，结果累积
 #   POST /api/batch   一个班的扫描件（zip 或整个文件夹）+ 名单，按考号归组、多页合并、跟名单匹配
+#
+# ---- 2026-09-25 起：不再有进程内状态 ----
+#
+# 原来所有东西都放在一个全局 `STATE` 字典里，后果是：容器一重建、或改一行代码触发重启，
+# 整个班的结果连同老师刚补录的姓名一起没了。现在全部落 SQLite（store.py），
+# 每次请求按 `exam_id` 现场读出来。
+#
+# 「不再有内存态」这件事不只是持久化，它还顺手解决了一个并发的坑：
+# 两个老师各看各的考试时，同一个 STATE 会被来回覆盖 —— 我这边切个考试，
+# 你那边再点一下统计就会算到我的班上。现在每次请求都从库里按 exam_id 取，串不了。
 import json
 import os
 import uuid
+
 import numpy as np
 import cv2
-from flask import Flask, jsonify, request, send_from_directory, Response
+from flask import (Flask, jsonify, request, send_from_directory, Response,
+                   redirect, g)
 
 from . import omr
 from . import batch as bt
 from . import stats as st
+from . import store as store_mod
+from . import auth as auth_mod
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
 os.makedirs(DATA, exist_ok=True)
 
+# 库文件跟着 data/ 走 —— 它是 compose 的 bind mount，容器重建也留得住
+DB_PATH = os.environ.get('ASB_DB') or os.path.join(DATA, 'asb.db')
+STORE = store_mod.Store(DB_PATH)
+AUTH = auth_mod.Auth(STORE)
+
 app = Flask(__name__, static_folder=STATIC, static_url_path='')
 # 一个班 50 人 × 2 面 × 1MB 很容易过 100MB —— 给足余量（反正在内网跑）
 app.config['MAX_CONTENT_LENGTH'] = 512 * 1024 * 1024
 
-# results: id -> {'name','answers','sid','stu','cls','source'}
-# active:  最近一次识别产出的结果 id。统计/导出默认只针对这一批，
-#          否则「先扫 3 张试试、再扫一个班」会把两批混在一起算。
-STATE = {'template': None, 'results': {}, 'active': [],
-         'roster': {}, 'rosterCols': {}, 'rosterSource': None,
-         'students': [], 'warnings': []}
+COOKIE_SECURE = os.environ.get('ASB_COOKIE_SECURE', '').lower() in ('1', 'true', 'yes')
+
+
+class ApiError(Exception):
+    """带状态码的业务错误，直接吐给前端。"""
+
+    def __init__(self, message, code=400):
+        super().__init__(message)
+        self.code = code
 
 
 # ---------------------------------------------------------------- 识别
@@ -88,13 +110,6 @@ def _params():
     return page_idx, px_per_mm, fill_min, gap
 
 
-def _require_template():
-    tpl = STATE['template']
-    if not tpl:
-        raise bt.BatchError('请先上传「阅卷模板」')
-    return tpl
-
-
 def _page_guard(tpl, page_idx):
     """越界的页序号必须报错，不能放过去。
 
@@ -104,8 +119,74 @@ def _page_guard(tpl, page_idx):
     """
     n = len(tpl['pages'])
     if page_idx >= n:
-        raise bt.BatchError(f'页序号 {page_idx} 超出模板范围（模板共 {n} 面）——'
-                            f'请检查文件名里的页序提示，或重新导出正确的模板')
+        raise ApiError(f'页序号 {page_idx} 超出模板范围（模板共 {n} 面）——'
+                       f'请检查文件名里的页序提示，或重新导出正确的模板')
+
+
+# ---------------------------------------------------------------- 上下文：哪个考试
+
+def _req_exam_id():
+    """本次请求针对哪个考试（显式给的最优先）。"""
+    v = request.form.get('exam_id') or request.args.get('exam_id')
+    if v in (None, ''):
+        body = request.get_json(silent=True)
+        if isinstance(body, dict):
+            v = body.get('exam_id')
+    try:
+        return int(v) if v not in (None, '') else None
+    except (TypeError, ValueError):
+        raise ApiError('exam_id 不是数字')
+
+
+def _exam(create=True):
+    """取当前考试。
+
+    显式 exam_id > 服务端记着的「当前考试」 > 最近更新过的 > 现场建一个。
+    最后那条是为了让「刚部署、什么都没有」也能直接用：上传模板时自然就有了第一个考试。
+
+    可见性：**所有登录用户都能看到所有考试**（一个学校就一个教研室，按人隔离反而是负担）。
+    归属只用来管「谁能删」。这个取舍写在 README 里。
+    """
+    eid = _req_exam_id()
+    if eid is not None:
+        e = STORE.exam(eid)
+        if not e:
+            raise ApiError('这个考试不存在（可能已被别人删掉），刷新一下页面', 404)
+        return e
+    cid = STORE.get_meta('current_exam')
+    if cid:
+        e = STORE.exam(cid)
+        if e:
+            return e
+    rows = STORE.exams()
+    if rows:
+        return STORE.exam(rows[0]['id'])
+    if not create:
+        raise ApiError('还没有任何考试', 404)
+    e = STORE.create_exam('默认考试', owner_id=g.user['id'])
+    STORE.set_meta('current_exam', e['id'])
+    return e
+
+
+def _exam_template(exam, required=True):
+    tpl = exam.get('templateJson')
+    if not tpl and required:
+        raise ApiError('请先上传「阅卷模板」')
+    return tpl
+
+
+def _roster_info(exam):
+    return {'count': len(exam['roster']), 'columns': exam['rosterCols'],
+            'source': exam['roster_source']}
+
+
+def _key_text(key):
+    """标准答案转回可编辑文本（`1A 2B 3C`）—— 老师刷新页面后要能看见自己输过什么。"""
+    if not key:
+        return ''
+    # 题号按 int 排（题号正常情况下就是 int；万一有怪题号排到最后，别让整页崩掉）
+    order = sorted(key, key=lambda x: (0, x) if isinstance(x, int) else (1, str(x)))
+    return ' '.join(f'{k}{key[k]}' for k in order)
 
 
 # ---------------------------------------------------------------- 结果集
@@ -117,147 +198,369 @@ def _label(stu):
     return txt or (stu.get('source') or '未命名')
 
 
-def _sheets(ids=None):
-    """取结果集。默认只取「最近一次识别」那一批。"""
+def _student_sheet(stu):
+    """学生记录 → 统计/导出要的「一份卷子」。现场算，不缓存 —— 补录改名立刻生效。"""
+    return {'id': 'stu-' + str(stu.get('sid')), 'name': _label(stu),
+            'answers': stu.get('answers') or {}, 'sid': str(stu.get('sid')),
+            'stu': stu.get('name') or '', 'cls': stu.get('cls') or '',
+            'source': stu.get('source') or ''}
+
+
+def _sheets(exam, ids=None):
+    """取结果集。默认只取这个考试「最近一次识别」那一批。"""
     if ids is None:
-        ids = STATE['active'] or list(STATE['results'])
-    return [dict(STATE['results'][i], id=i) for i in ids if i in STATE['results']]
+        ids = list(exam['activeIds'] or [])
+    if not ids:
+        ids = ['stu-' + str(s['sid']) for s in STORE.students(exam['id'])] + \
+            [s['id'] for s in STORE.scans(exam['id'])]
+    want_stu = [str(i)[4:] for i in ids if str(i).startswith('stu-')]
+    want_scan = [str(i) for i in ids if not str(i).startswith('stu-')]
+    found = {}
+    for s in STORE.students(exam['id'], sids=want_stu):
+        found['stu-' + str(s['sid'])] = _student_sheet(s)
+    for s in STORE.scans(exam['id'], rids=want_scan):
+        found[s['id']] = s
+    return [found[i] for i in ids if i in found]          # 保持 ids 的顺序
 
 
-def _qnos(sheets):
+def _qnos(exam, sheets):
     """题号全集：模板是权威（含学生都没填的题），没有模板才退回结果里出现过的题号。"""
-    if STATE['template']:
-        return sorted({q['no'] for p in STATE['template']['pages'] for q in p.get('questions', [])})
+    tpl = exam.get('templateJson')
+    if tpl:
+        return sorted({q['no'] for p in tpl['pages'] for q in p.get('questions', [])})
     return sorted({q for s in sheets for q in s['answers']})
 
 
-# ---------------------------------------------------------------- 名单
+# ---------------------------------------------------------------- 名单 / 补录
 
-def _overrides():
-    """人工补录数据（考号 → 姓名/班级）。
-
-    两种传法都要认：批量上传时跟文件一起当表单字段带过来，重新套用名单时用 JSON 体。
-    """
+def _incoming_overrides():
+    """这次请求带的补录数据。两种传法都要认：跟文件一起的表单字段，或 JSON 体。"""
     raw = request.form.get('overrides')
-    if not raw:
-        body = request.get_json(silent=True)
-        d = body.get('overrides') if isinstance(body, dict) else None
+    if raw:
+        try:
+            d = json.loads(raw)
+        except ValueError:
+            return {}
         return d if isinstance(d, dict) else {}
-    try:
-        d = json.loads(raw)
-    except ValueError:
-        return {}
+    body = request.get_json(silent=True)
+    d = body.get('overrides') if isinstance(body, dict) else None
     return d if isinstance(d, dict) else {}
 
 
-def _load_roster(explicit, embedded):
-    """名单来源：显式上传的 > zip 里自带的；都没有就沿用上一份（同一个班的多次上传）。
+def _merge_overrides(exam, incoming):
+    """把这次带的补录并进库里那份，返回合并结果。
 
-    返回 (roster, error)。只有拿到新名单时才覆盖 —— 这样「先单独导名单、再传扫描件」
-    的用法不会因为第二次没带名单文件而丢掉名单。
+    补录**必须落库**：老师填完姓名一刷新就没了，正是这次改造要解决的问题。
+    用合并而不是替换 —— 前端只带自己记得的那几个，替换会把别处录的冲掉。
+    """
+    cur = dict(exam['overrides'] or {})
+    for sid, v in (incoming or {}).items():
+        if not isinstance(v, dict):
+            continue
+        keep = {k: str(v.get(k)).strip() for k in ('name', 'cls') if str(v.get(k) or '').strip()}
+        if keep:
+            cur.setdefault(str(sid), {}).update(keep)
+    return cur
+
+
+def _load_roster(exam, explicit, embedded):
+    """名单来源：显式上传的 > zip 里自带的；都没有就沿用这个考试已有的那份。
+
+    只有拿到新名单时才覆盖 —— 这样「先单独导名单、再传扫描件」的用法
+    不会因为第二次没带名单文件而丢掉名单。
     """
     if explicit is not None and explicit.filename:
         try:
             roster, cols = bt.parse_roster(bt._read_text(explicit.read()))
         except bt.BatchError as e:
-            return None, '名单解析失败：' + str(e)
-        STATE.update(roster=roster, rosterCols=cols, rosterSource=explicit.filename)
+            raise ApiError('名单解析失败：' + str(e))
+        STORE.set_roster(exam['id'], roster, cols, explicit.filename)
     else:
         found = bt.find_roster(embedded)
         if found:
             roster, cols, src = found
-            STATE.update(roster=roster, rosterCols=cols, rosterSource=src)
-    return STATE['roster'], None
+            STORE.set_roster(exam['id'], roster, cols, src)
+    return STORE.exam(exam['id'])
 
 
-def _roster_info():
-    return {'count': len(STATE['roster']), 'columns': STATE['rosterCols'],
-            'source': STATE['rosterSource']}
+def _match(exam, overrides, save=False):
+    """套名单 → (students, warnings)。save=True 时把结果写回库。"""
+    students = STORE.students(exam['id'])
+    students, warnings = bt.match(students, exam['roster'], overrides)
+    if save:
+        STORE.save_students(exam['id'], students)
+        STORE.set_overrides(exam['id'], overrides)
+    return students, warnings
 
 
-def _rematch():
-    """重新套一次名单 —— 只改姓名/班级这类展示字段，不碰已经识别出来的答案。"""
-    students, warnings = bt.match(STATE['students'], STATE['roster'], _overrides())
-    STATE['students'], STATE['warnings'] = students, warnings
-    for stu in students:
-        rec = STATE['results'].get('stu-' + str(stu['sid']))
-        if rec:
-            rec.update({'name': _label(stu), 'stu': stu['name'], 'cls': stu['cls']})
-    return students
+def _students_view(exam):
+    """当前考试的学生视图。
+
+    读的时候**现场重套一次名单**，而不是返回库里存着的 name/cls ——
+    刚改完名单、或另一个人补录了一个名字，这里是立刻可见的，
+    也不会出现「库里存的 matched 标记跟名单对不上」这种陈旧数据。
+    """
+    if not STORE.students(exam['id']):
+        return [], []
+    return _match(exam, exam['overrides'])
 
 
-# ---------------------------------------------------------------- 路由
+# ---------------------------------------------------------------- 鉴权闸门
+
+# 这几个接口不需要登录：探活、登录本身、以及登录页要问的「我是谁 / 初始化过没有」
+PUBLIC_API = {'/api/health', '/api/login', '/api/setup', '/api/me'}
+
+
+@app.before_request
+def _gate():
+    """所有 /api/* 都要登录（白名单除外）。
+
+    放在 before_request 而不是逐个路由加装饰器：**默认拒绝**才安全，
+    以后新加接口忘了加装饰器也不会漏在外面。写操作的**角色**要求仍然逐个标（见各路由）。
+    """
+    p = request.path
+    if not p.startswith('/api/') or p in PUBLIC_API:
+        return None
+    u = AUTH.current()
+    if not u:
+        return jsonify({'error': '未登录', 'needLogin': True}), 401
+    g.user = u
+    return None
+
+
+def _err(msg, code=400):
+    """把 ApiError / BatchError / AuthError 统一成 JSON。"""
+    return jsonify({'error': str(msg)}), code
+
+
+# ---------------------------------------------------------------- 路由：公开
 
 @app.get('/')
 def index():
+    if AUTH.need_setup() or not AUTH.current():
+        return redirect('/login')
     return send_from_directory(STATIC, 'index.html')
 
 
+@app.get('/login')
+def login_page():
+    return send_from_directory(STATIC, 'login.html')
+
+
+@app.get('/api/health')
+def health():
+    """探活 + 初始化状态。docker healthcheck 也打这个（**不能要求登录**）。"""
+    return jsonify({'ok': True, 'needSetup': AUTH.need_setup(),
+                    'schema': STORE.schema_version()})
+
+
+@app.get('/api/me')
+def me():
+    """当前登录身份。登录页靠它判断「要不要引导创建管理员」。"""
+    return jsonify({'user': auth_mod.user_json(AUTH.current()),
+                    'needSetup': AUTH.need_setup()})
+
+
+@app.post('/api/setup')
+def setup():
+    """创建第一个管理员。只在库里没有任何用户时可用。"""
+    body = request.get_json(silent=True) or {}
+    try:
+        u = AUTH.setup(body.get('username') or request.form.get('username'),
+                       body.get('password') or request.form.get('password'),
+                       body.get('display') or '')
+    except auth_mod.AuthError as e:
+        return _err(e, e.code)
+    except store_mod.StoreError as e:
+        return _err(e)
+    _, token = AUTH.login(u['username'], body.get('password') or request.form.get('password'))
+    return auth_mod.set_cookie(jsonify({'ok': True, 'user': auth_mod.user_json(u)}),
+                               token, COOKIE_SECURE)
+
+
+@app.post('/api/login')
+def login():
+    body = request.get_json(silent=True) or {}
+    try:
+        u, token = AUTH.login(body.get('username') or request.form.get('username'),
+                              body.get('password') or request.form.get('password'))
+    except auth_mod.AuthError as e:
+        return _err(e, e.code)
+    return auth_mod.set_cookie(jsonify({'ok': True, 'user': auth_mod.user_json(u)}),
+                               token, COOKIE_SECURE)
+
+
+@app.post('/api/logout')
+def logout():
+    """退出登录。服务端会话**真的**被删掉 —— 不是只把 cookie 清掉。"""
+    AUTH.logout(request.cookies.get(auth_mod.COOKIE))
+    return auth_mod.clear_cookie(jsonify({'ok': True}))
+
+
+# ---------------------------------------------------------------- 路由：考试
+
+@app.get('/api/exams')
+def list_exams():
+    rows = STORE.exams()
+    return jsonify({'exams': rows, 'current': (_exam(create=False)['id']
+                                               if rows else None)})
+
+
+@app.get('/api/exam')
+def get_exam():
+    exam = _exam()
+    return jsonify(_exam_view(exam))
+
+
+def _exam_view(exam):
+    return {
+        'id': exam['id'], 'name': exam['name'], 'ownerId': exam['owner_id'],
+        'createdAt': exam['created_at'], 'updatedAt': exam['updated_at'],
+        'template': exam['tplSummary'],
+        'hasTemplate': bool(exam['templateJson']),
+        'roster': _roster_info(exam),
+        'answerKey': _key_text(exam['answerKey']),
+        'activeIds': exam['activeIds'], 'activeKind': exam['active_kind'],
+        'studentCount': len(STORE.students(exam['id'])),
+        'canDelete': g.user['role'] == 'admin' or exam['owner_id'] == g.user['id'],
+    }
+
+
+@app.post('/api/exams')
+@AUTH.require(*auth_mod.CAN_WRITE)
+def create_exam():
+    body = request.get_json(silent=True) or {}
+    name = (body.get('name') or request.form.get('name') or '').strip()
+    if not name:
+        return _err('给这个考试起个名字')
+    exam = STORE.create_exam(name, owner_id=g.user['id'])
+    STORE.set_meta('current_exam', exam['id'])
+    return jsonify({'ok': True, 'exam': _exam_view(exam)})
+
+
+@app.post('/api/exam/select')
+def select_exam():
+    """切到某个考试。记在服务端只是为了「浏览器第一次打开时知道看哪个」——
+    之后前端一直显式带 exam_id，两个人各看各的不会互相串。"""
+    eid = _req_exam_id()
+    if eid is None:
+        return _err('没给 exam_id')
+    exam = STORE.exam(eid)
+    if not exam:
+        return _err('这个考试不存在', 404)
+    STORE.set_meta('current_exam', eid)
+    return jsonify({'ok': True, 'exam': _exam_view(exam)})
+
+
+@app.post('/api/exam/rename')
+@AUTH.require(*auth_mod.CAN_WRITE)
+def rename_exam():
+    exam = _exam()
+    body = request.get_json(silent=True) or {}
+    name = (body.get('name') or request.form.get('name') or '').strip()
+    if not name:
+        return _err('名字不能为空')
+    STORE.rename_exam(exam['id'], name)
+    return jsonify({'ok': True, 'exam': _exam_view(STORE.exam(exam['id']))})
+
+
+@app.post('/api/exam/delete')
+@AUTH.require(*auth_mod.CAN_WRITE)
+def delete_exam():
+    exam = _exam()
+    if g.user['role'] != 'admin' and exam['owner_id'] != g.user['id']:
+        return _err('只有管理员或这个考试的创建者能删', 403)
+    STORE.delete_exam(exam['id'])
+    if STORE.get_meta('current_exam') == exam['id']:
+        STORE.set_meta('current_exam', None)
+    return jsonify({'ok': True})
+
+
+@app.post('/api/answer-key')
+@AUTH.require(*auth_mod.CAN_WRITE)
+def save_answer_key():
+    """把标准答案存到考试上。老师输了 20 个答案，刷新一次就没了是不能接受的。"""
+    exam = _exam()
+    body = request.get_json(silent=True) or {}
+    text = body.get('key') if 'key' in body else request.form.get('key', '')
+    key = st.parse_key(text or '')
+    STORE.set_answer_key(exam['id'], key)
+    return jsonify({'ok': True, 'answerKey': _key_text(key), 'count': len(key)})
+
+
+# ---------------------------------------------------------------- 路由：模板
+
 @app.post('/api/template')
+@AUTH.require(*auth_mod.CAN_WRITE)
 def upload_template():
+    exam = _exam()
     f = request.files.get('file')
     if not f:
-        return jsonify({'error': '没有上传文件'}), 400
+        return _err('没有上传文件')
     try:
         tpl = omr.load_template(f.read().decode('utf-8'))
     except Exception as e:
-        return jsonify({'error': str(e)}), 400
-    STATE['template'] = tpl
-    STATE['results'] = {}
-    STATE['active'] = []
-    STATE['students'] = []
-    STATE['warnings'] = []
-    return jsonify({'ok': True, 'summary': omr.template_summary(tpl)})
+        return _err(str(e))
+    summary = omr.template_summary(tpl)
+    # 只有模板**真的换了**才清空已识别的结果。老师手滑重新传一遍同一份模板，
+    # 不该把刚扫完的一个班清掉。
+    old = exam['templateJson']
+    if old is not None and _canonical(old) != _canonical(tpl):
+        STORE.save_students(exam['id'], [])
+        STORE.clear_scans(exam['id'])
+        STORE.set_active(exam['id'], None, [])
+    STORE.set_template(exam['id'], tpl, summary)
+    return jsonify({'ok': True, 'summary': summary, 'exam': _exam_view(STORE.exam(exam['id']))})
+
+
+def _canonical(tpl):
+    return json.dumps(tpl, sort_keys=True, ensure_ascii=False)
 
 
 @app.get('/api/template')
 def get_template():
-    tpl = STATE['template']
-    if not tpl:
+    exam = _exam()
+    if not exam['tplSummary']:
         return jsonify({'template': None})
-    return jsonify({'template': omr.template_summary(tpl)})
+    return jsonify({'template': exam['tplSummary']})
 
+
+# ---------------------------------------------------------------- 路由：识别
 
 @app.post('/api/scan')
+@AUTH.require(*auth_mod.CAN_WRITE)
 def scan():
-    try:
-        tpl = _require_template()
-    except bt.BatchError as e:
-        return jsonify({'error': str(e)}), 400
+    exam = _exam()
+    tpl = _exam_template(exam)
     files = request.files.getlist('files') or ([request.files['file']] if 'file' in request.files else [])
     if not files:
-        return jsonify({'error': '没有上传扫描图'}), 400
+        return _err('没有上传扫描图')
     page_idx, px_per_mm, fill_min, gap = _params()
-    try:
-        _page_guard(tpl, page_idx)
-    except bt.BatchError as e:
-        return jsonify({'error': str(e)}), 400
+    _page_guard(tpl, page_idx)
 
-    out, ids = [], []
+    out, saved = [], []
     for f in files:
         r, answers = _recognize_bytes(f.read(), f.filename, tpl,
                                       page_idx, px_per_mm, fill_min, gap)
         if answers is not None:
-            STATE['results'][r['id']] = {'name': f.filename, 'answers': answers,
-                                         'source': f.filename}
-            ids.append(r['id'])
+            saved.append((r['id'], f.filename, answers, None, None, None, f.filename))
         out.append(r)
-    if ids:
-        STATE['active'] = ids          # 统计/导出针对刚识别的这一批
+    if saved:
+        STORE.add_scans(exam['id'], saved)
+        STORE.set_active(exam['id'], 'scan', [s[0] for s in saved])
     return jsonify({'results': out})
 
 
 @app.post('/api/batch')
+@AUTH.require(*auth_mod.CAN_WRITE)
 def batch_api():
     """一次一个班：zip / 整个文件夹 / 一堆散图 + 可选名单。"""
-    try:
-        tpl = _require_template()
-    except bt.BatchError as e:
-        return jsonify({'error': str(e)}), 400
+    exam = _exam()
+    tpl = _exam_template(exam)
 
     files = request.files.getlist('files')
     if not files:
-        return jsonify({'error': '没有上传扫描件（zip 压缩包 / 整张图片 / 整个文件夹都行）'}), 400
+        return _err('没有上传扫描件（zip 压缩包 / 整张图片 / 整个文件夹都行）')
     page_idx, px_per_mm, fill_min, gap = _params()
 
     # 选文件夹上传时浏览器会带 webkitRelativePath，用它还原目录结构；顺序与 files 对齐
@@ -271,14 +574,13 @@ def batch_api():
     try:
         images, rosters, zips = bt.unpack(uploads)
     except bt.BatchError as e:
-        return jsonify({'error': str(e)}), 400
+        return _err(str(e))
     if not images:
-        return jsonify({'error': '没找到图片（支持 png/jpg/bmp/webp/tif；'
-                                 'zip 请确认压缩包里是图片而不是又一层无关文件）'}), 400
+        return _err('没找到图片（支持 png/jpg/bmp/webp/tif；'
+                    'zip 请确认压缩包里是图片而不是又一层无关文件）')
 
-    roster, err = _load_roster(request.files.get('roster'), rosters)
-    if err:
-        return jsonify({'error': err}), 400
+    exam = _load_roster(exam, request.files.get('roster'), rosters)
+    overrides = _merge_overrides(exam, _incoming_overrides())
 
     students = bt.group(images)
     for stu in students:
@@ -286,7 +588,7 @@ def batch_api():
         for p in stu['pages']:
             try:
                 _page_guard(tpl, p['page'])
-            except bt.BatchError as e:
+            except ApiError as e:
                 pageIssues.append(str(e))
                 pages.append({'ok': False, 'name': p['name'], 'page': p['page'],
                               'hinted': p.get('hinted'),
@@ -313,8 +615,8 @@ def batch_api():
         stu['source'] = '、'.join(p['source'] for p in pages if p.get('source'))
 
     # 识别完才知道卷面上涂的考号 → 用它校正/合并分组（文件名里没有考号也能对上人）
-    students = bt.regroup(students, roster)
-    students, warnings = bt.match(students, roster, _overrides())
+    students = bt.regroup(students, exam['roster'])
+    students, warnings = bt.match(students, exam['roster'], overrides)
 
     if len(tpl['pages']) > 1:
         nohint = [p for stu in students for p in stu['pages'] if p.get('ok') and not p.get('hinted')]
@@ -322,90 +624,100 @@ def batch_api():
             warnings.insert(0, f'有 {len(nohint)} 张图找不到页序提示，已按上传顺序分页 —— '
                                f'这套模板有 {len(tpl["pages"])} 面，'
                                f'请在文件名里写明（如 正面/反面 或 _1/_2）后再传一次')
-    STATE['students'], STATE['warnings'] = students, warnings
 
-    # 批量是「一个班一次」的操作：整批替换，避免上一批的学生残留
-    STATE['results'] = {}
-    for stu in students:
-        STATE['results']['stu-' + str(stu['sid'])] = {
-            'name': _label(stu), 'answers': stu['answers'],
-            'sid': str(stu['sid']), 'stu': stu['name'], 'cls': stu['cls'],
-            'source': stu['source'],
-        }
-    STATE['active'] = list(STATE['results'])
+    # 批量是「一个班一次」的操作：整批替换（含之前试扫的散图），避免两批混算
+    STORE.save_students(exam['id'], students)
+    STORE.clear_scans(exam['id'])
+    STORE.set_overrides(exam['id'], overrides)
+    STORE.set_active(exam['id'], 'batch',
+                     ['stu-' + str(s['sid']) for s in students])
 
-    return jsonify({'students': students, 'warnings': warnings, 'roster': _roster_info(),
+    return jsonify({'students': students, 'warnings': warnings,
+                    'roster': _roster_info(STORE.exam(exam['id'])),
+                    'exam': _exam_view(STORE.exam(exam['id'])),
                     'stats': {'images': len(images), 'students': len(students), 'zips': zips}})
 
 
 @app.post('/api/roster')
+@AUTH.require(*auth_mod.CAN_WRITE)
 def upload_roster():
     """单独导名单：先导名单再传扫描件，或传完再补名单都行。"""
+    exam = _exam()
     f = request.files.get('file')
     if not f:
-        return jsonify({'error': '没有上传名单文件'}), 400
+        return _err('没有上传名单文件')
     try:
         roster, cols = bt.parse_roster(bt._read_text(f.read()))
     except bt.BatchError as e:
-        return jsonify({'error': str(e)}), 400
-    STATE.update(roster=roster, rosterCols=cols, rosterSource=f.filename)
-    students = _rematch()
-    return jsonify({'roster': _roster_info(), 'students': students,
-                    'warnings': STATE['warnings']})
+        return _err(str(e))
+    STORE.set_roster(exam['id'], roster, cols, f.filename)
+    exam = STORE.exam(exam['id'])
+    students, warnings = _match(exam, exam['overrides'], save=True)
+    return jsonify({'roster': _roster_info(exam), 'students': students,
+                    'warnings': warnings})
 
 
 @app.post('/api/batch/rematch')
+@AUTH.require(*auth_mod.CAN_WRITE)
 def rematch():
-    """老师手工补录姓名 / 班级后重新套名单。"""
-    students = _rematch()
-    return jsonify({'students': students, 'warnings': STATE['warnings'],
-                    'roster': _roster_info()})
+    """老师手工补录姓名 / 班级后重新套名单。补录会存进库里，刷新页面也在。"""
+    exam = _exam()
+    overrides = _merge_overrides(exam, _incoming_overrides())
+    students, warnings = _match(exam, overrides, save=True)
+    return jsonify({'students': students, 'warnings': warnings,
+                    'roster': _roster_info(exam)})
 
 
 @app.get('/api/students')
 def get_students():
-    return jsonify({'students': STATE['students'], 'warnings': STATE['warnings'],
-                    'roster': _roster_info()})
+    exam = _exam(create=False)
+    students, warnings = _students_view(exam)
+    return jsonify({'students': students, 'warnings': warnings,
+                    'roster': _roster_info(exam), 'exam': _exam_view(exam)})
 
+
+# ---------------------------------------------------------------- 路由：导出
 
 @app.get('/api/roster.csv')
 def roster_csv():
     """对账表：考号、考号从哪儿来的、几个人没交、有哪些问题要人工看。"""
+    exam = _exam(create=False)
+    students, _ = _students_view(exam)
     rows = [[s['sid'], s.get('name', ''), s.get('cls', ''),
              bt.SID_SOURCE_ZH.get(s.get('sidSource'), ''),
              len(s.get('pages') or []),
              s.get('note') or '',
-             '；'.join(s.get('issues') or [])] for s in STATE['students']]
+             '；'.join(s.get('issues') or [])] for s in students]
     csv_text = st.to_csv(rows, ['考号', '姓名', '班级', '考号来源', '页数', '说明', '备注'])
     return Response(csv_text, mimetype='text/csv; charset=utf-8',
                     headers={'Content-Disposition': 'attachment; filename="roster.csv"'})
 
 
-@app.get('/api/overlay/<rid>.png')
-def overlay(rid):
-    return send_from_directory(DATA, rid + '.png', mimetype='image/png')
-
-
 @app.post('/api/stats')
 def stats_api():
+    exam = _exam(create=False)
     body = request.get_json(silent=True) or {}
     key_text = body.get('key') or request.form.get('key') or ''
     ids = body.get('ids')
     if not ids and request.form.get('ids'):
         ids = request.form['ids'].split(',')
-    key = st.parse_key(key_text)
-    sheets = _sheets(ids)
-    return jsonify(st.summarize(sheets, _qnos(sheets), key or None))
+    # 没传标准答案就用考试上存着的那份 —— 老师不用每次都重输。
+    # 判「有没有传」要看文本空不空，不能用 `or`：传了空串是想清空，`or` 会把它当没传。
+    key = st.parse_key(key_text) if (key_text or '').strip() else exam['answerKey']
+    sheets = _sheets(exam, ids)
+    return jsonify(st.summarize(sheets, _qnos(exam, sheets), key or None))
 
 
 @app.post('/api/export.csv')
 def export_csv():
-    key = st.parse_key(request.form.get('key', ''))
+    exam = _exam(create=False)
+    key_text = request.form.get('key', '')
+    key = st.parse_key(key_text) if key_text.strip() else exam['answerKey']
     ids = request.form.get('ids', '').split(',') if request.form.get('ids') else None
-    sheets = _sheets(ids)
+    sheets = _sheets(exam, ids)
     if any(s.get('sid') for s in sheets):
         sheets.sort(key=lambda s: bt.natkey(str(s.get('sid') or '')))
-    qnos = _qnos(sheets)
+    qnos = _qnos(exam, sheets)
     with_id = any(s.get('sid') for s in sheets)
 
     head = (['考号', '姓名', '班级'] if with_id else []) + ['文件'] \
@@ -420,6 +732,97 @@ def export_csv():
     csv_text = st.to_csv(rows, head)
     return Response(csv_text, mimetype='text/csv; charset=utf-8',
                     headers={'Content-Disposition': 'attachment; filename="omr-answers.csv"'})
+
+
+@app.get('/api/overlay/<rid>.png')
+def overlay(rid):
+    # 校对图按 id 取，不按考试分目录 —— 文件名是随机的 12 位 hex，猜到别人的等于猜 16^12 次
+    return send_from_directory(DATA, rid + '.png', mimetype='image/png')
+
+
+# ---------------------------------------------------------------- 路由：账号
+
+@app.post('/api/password')
+def change_password():
+    """本人改口令。改完自己所有会话失效（包括当前这个），所以要重新登录。"""
+    body = request.get_json(silent=True) or {}
+    try:
+        AUTH.change_password(g.user, body.get('old'), body.get('new'))
+    except auth_mod.AuthError as e:
+        return _err(e, e.code)
+    return auth_mod.clear_cookie(jsonify({'ok': True, 'relogin': True}))
+
+
+@app.get('/api/users')
+@AUTH.require(*auth_mod.CAN_ADMIN)
+def list_users():
+    return jsonify({'users': STORE.list_users()})
+
+
+@app.post('/api/users')
+@AUTH.require(*auth_mod.CAN_ADMIN)
+def create_user():
+    body = request.get_json(silent=True) or {}
+    try:
+        u = STORE.create_user(body.get('username'), auth_mod.hash_password(body.get('password')),
+                              role=body.get('role') or 'teacher',
+                              display=body.get('display') or '')
+    except (store_mod.StoreError, ValueError) as e:
+        return _err(e)
+    return jsonify({'ok': True, 'user': {k: v for k, v in u.items() if k != 'pwd'}})
+
+
+@app.post('/api/users/role')
+@AUTH.require(*auth_mod.CAN_ADMIN)
+def set_role():
+    body = request.get_json(silent=True) or {}
+    try:
+        STORE.set_role(int(body.get('id')), body.get('role'))
+    except (store_mod.StoreError, TypeError, ValueError) as e:
+        return _err(e)
+    return jsonify({'ok': True, 'users': STORE.list_users()})
+
+
+@app.post('/api/users/password')
+@AUTH.require(*auth_mod.CAN_ADMIN)
+def set_user_password():
+    """管理员帮人重置口令。顺手把那个人的会话全掐掉 —— 重置口令的常见原因就是账号被盗。"""
+    body = request.get_json(silent=True) or {}
+    try:
+        uid = int(body.get('id'))
+        STORE.set_password(uid, auth_mod.hash_password(body.get('password')))
+        STORE.delete_user_sessions(uid)
+    except (store_mod.StoreError, ValueError) as e:
+        return _err(e)
+    return jsonify({'ok': True})
+
+
+@app.post('/api/users/delete')
+@AUTH.require(*auth_mod.CAN_ADMIN)
+def delete_user():
+    body = request.get_json(silent=True) or {}
+    try:
+        uid = int(body.get('id'))
+        if uid == g.user['id']:
+            return _err('不能删掉自己')
+        STORE.delete_user(uid)
+    except (store_mod.StoreError, TypeError, ValueError) as e:
+        return _err(e)
+    return jsonify({'ok': True, 'users': STORE.list_users()})
+
+
+# ---------------------------------------------------------------- 错误处理
+
+@app.errorhandler(ApiError)
+def _on_api_error(e):
+    return _err(e, e.code)
+
+
+@app.errorhandler(404)
+def _on_404(e):
+    if request.path.startswith('/api/'):
+        return jsonify({'error': '没有这个接口'}), 404
+    return redirect('/')
 
 
 def create_app():

@@ -22,8 +22,10 @@ button{background:var(--pri);color:#fff;border:0;border-radius:6px;padding:7px 1
 button.ghost{background:#fff;color:var(--pri);border:1px solid #cfe0f3;}
 button:disabled{opacity:.5;cursor:not-allowed;}
 input[type=file]{font-size:13px;}
-input[type=text],input[type=number],textarea{border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-size:13px;font-family:inherit;}
+input[type=text],input[type=number],input[type=password],select,textarea{border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-size:13px;font-family:inherit;background:#fff;color:inherit;}
 input[type=number]{width:74px;}
+select{max-width:190px;}
+header .who{font-size:13px;color:#3d4c5c;}
 textarea{width:100%;min-height:64px;}
 label.f{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#4a5568;}
 .hint{font-size:12px;color:var(--mut);}
@@ -91,6 +93,15 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 <header>
   <h1>🎯 答题卡扫描识别</h1>
   <span class="sub">阅卷模板定位 + OpenCV 填涂识别 · 纯本地、无模型下载、可离线</span>
+  <span style="flex:1"></span>
+  <!-- 考试是持久化的单位：模板、名单、标准答案、识别结果都挂在它下面 -->
+  <label class="f">考试 <select id="examSel" title="每次扫描/统计都针对当前考试"></select></label>
+  <button id="btnNewExam" class="ghost">新建</button>
+  <button id="btnRenExam" class="ghost">改名</button>
+  <button id="btnDelExam" class="ghost">删除</button>
+  <span class="badge info who" id="whoami">…</span>
+  <button id="btnPwd" class="ghost">改口令</button>
+  <button id="btnLogout" class="ghost">退出</button>
 </header>
 
 <div class="wrap">
@@ -120,7 +131,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 
     <div class="row" style="margin-top:12px">
       <label class="f">学生名单（可选）<input type="file" id="bRoster" accept=".csv,.tsv,.txt"></label>
-      <span class="hint">表头认「考号 / 姓名 / 班级」，Excel 导出的 GBK 编码也能读；名单也可以夹在压缩包里</span>
+      <span class="hint" id="bRosterHint">表头认「考号 / 姓名 / 班级」，Excel 导出的 GBK 编码也能读；名单也可以夹在压缩包里</span>
     </div>
 
     <div class="row">
@@ -157,6 +168,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
     </div>
     <div class="row">
       <button id="btnStats" class="ghost">生成统计</button>
+      <button id="btnKey" class="ghost">保存标准答案</button>
       <button id="btnCsv" class="ghost">导出成绩 CSV</button>
       <button id="btnRosterCsv" class="ghost">导出名单对账 CSV</button>
       <span class="hint" id="statsInfo"></span>
@@ -165,6 +177,23 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
       <div><h3 style="font-size:13px;margin:10px 0 6px;">每题分布 / 正确率</h3><div id="qstats"><div class="empty">—</div></div></div>
       <div><h3 style="font-size:13px;margin:10px 0 6px;">个人得分</h3><div id="sstats"><div class="empty">—</div></div></div>
     </div>
+  </div>
+
+  <!-- 只有管理员看得见（别人进来这段一直 display:none） -->
+  <div class="card" id="userCard" style="display:none">
+    <h2>⑤ 账号管理 <span class="tag">管理员可见 · 所有登录用户都能看到所有考试，角色只决定能不能改</span></h2>
+    <div class="row">
+      <input type="text" id="nu" placeholder="用户名" style="width:120px">
+      <input type="text" id="nd" placeholder="姓名（可空）" style="width:110px">
+      <input type="password" id="np" placeholder="口令（≥8 位）" style="width:150px">
+      <select id="nr">
+        <option value="teacher">老师（可扫描、可改）</option>
+        <option value="viewer">只读（只能看）</option>
+        <option value="admin">管理员（可管账号）</option>
+      </select>
+      <button id="btnAddUser">添加账号</button>
+    </div>
+    <div id="userList"></div>
   </div>
 </div>
 
@@ -203,17 +232,148 @@ function fmtSize(n){
   return (n/1024/1024).toFixed(1) + ' MB';
 }
 const params = () => ({pxPerMm: $('#pxPerMm').value, fillMin: $('#fillMin').value, gap: $('#gap').value});
+const tplLine = s => {
+  const p = s.paper || {};
+  return `${p.size || ''} ${p.orientation || ''} · ${p.w}×${p.h}mm · ${s.pages.length} 面 · `
+    + `共 ${s.questionCount} 题 · 定位点 ${(s.marks||{}).style || ''} ${(s.marks||{}).size || ''}mm`;
+};
+
+// ============================================================ 身份 / 当前考试
+//
+// 每次请求都显式带 `exam_id`。服务端**没有进程内状态**（这是这次改造的重点），
+// 光靠服务端记「当前考试」的话，两个人同时用就会互相串 —— 我切一下考试，
+// 你那边点「生成统计」就跑到我班上去了。
+let CUR_USER = null;               // {id, username, display, role, roleZh}
+let CUR = null;                    // 当前考试视图（含 template/roster/answerKey）
+
+const isAdmin = () => !!CUR_USER && CUR_USER.role === 'admin';
+const canWrite = () => !!CUR_USER && CUR_USER.role !== 'viewer';
+
+// 401 → 跳登录页。散在每个调用点一定会漏，所以统一在这里收口。
+async function api(url, opt = {}) {
+  const r = await fetch(url, opt);
+  if (r.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+  return r;
+}
+const apijson = async (url, opt) => (await api(url, opt)).json();
+const postj = (url, obj) => apijson(url, {method: 'POST',
+  headers: {'Content-Type': 'application/json'}, body: JSON.stringify(exj(obj))});
+
+// 带上 exam_id。**显式给了就用显式的**（「切到某个考试」就是这么用的），否则补当前考试。
+// 注意 boot 期间 CUR 还是 null，这里不能直接读 CUR.id。
+const exj = obj => (obj.exam_id != null || !CUR) ? obj : {...obj, exam_id: CUR.id};
+const ex = fd => { if (CUR) fd.append('exam_id', CUR.id); return fd; };
+const qid = extra => `exam_id=${CUR.id}` + (extra ? '&' + extra : '');
+
+const LS_EXAM = 'asb.examId';
+
+async function boot(){
+  const me = await apijson('/api/me');
+  if (!me.user){ location.href = '/login'; return; }
+  CUR_USER = me.user;
+  $('#whoami').textContent = `${me.user.display} · ${me.user.roleZh}`;
+  if (isAdmin()){ $('#userCard').style.display = ''; loadUsers(); }
+  else if (!canWrite()){
+    $('.wrap').insertAdjacentHTML('afterbegin',
+      '<div class="warns"><div>你当前是「只读」身份：可以看结果、导出 CSV，但不能上传、识别或修改。</div></div>');
+  }
+  const list = await loadExams();
+  // 记着的那个考试可能已经被别人删了 —— 用过期的 id 会直接 404，先核一遍
+  const keep = Number(localStorage.getItem(LS_EXAM)) || null;
+  await openExam(list.some(e => e.id === keep) ? keep : (list[0] || {}).id || null);
+}
+
+async function loadExams(){
+  const r = await apijson('/api/exams');
+  const list = r.exams || [];
+  $('#examSel').innerHTML = list.length
+    ? list.map(e => `<option value="${e.id}">${esc(e.name)} · ${e.hasTemplate ? '' : '无模板 · '}${e.studentCount || 0} 人</option>`).join('')
+    : '<option value="">（还没有考试）</option>';
+  return list;
+}
+
+async function openExam(id){
+  if (id) await postj('/api/exam/select', {exam_id: id});
+  CUR = await apijson('/api/exam' + (id ? `?exam_id=${id}` : ''));
+  localStorage.setItem(LS_EXAM, CUR.id);
+  $('#examSel').value = CUR.id;
+  $('#btnDelExam').disabled = !CUR.canDelete;
+  paintExam();
+  await restoreBatch();
+}
+
+function paintExam(){
+  $('#tplInfo').textContent = CUR.template ? tplLine(CUR.template) : '尚未上传模板';
+  $('#key').value = CUR.answerKey || '';
+  const r = CUR.roster || {};
+  if (r.count){
+    $('#bRosterHint').textContent = `当前名单 ${r.count} 人（来自 ${r.source || '—'}）；再传一份会覆盖它`;
+  } else {
+    $('#bRosterHint').textContent = '表头认「考号 / 姓名 / 班级」，Excel 导出的 GBK 编码也能读；名单也可以夹在压缩包里';
+  }
+}
+
+// 刷新页面/重启服务后，把已经识别过的结果重新画出来 —— 这正是这次改造要的效果
+async function restoreBatch(){
+  const r = await apijson('/api/students?' + qid());
+  if (!r.students || !r.students.length){
+    $('#batchInfo').textContent = '';
+    $('#batchBox').innerHTML = '';
+    return;
+  }
+  ovr = {};
+  (r.students || []).forEach(s => { if (s.manual) ovr[s.sid] = {name: s.name, cls: s.cls}; });
+  $('#batchInfo').textContent = `已恢复上次结果：${r.students.length} 位考生`
+    + ((r.roster || {}).count ? ` · 名单 ${r.roster.count} 人` : ' · 未提供名单')
+    + '（存在服务端，刷新/重启都不会丢）';
+  renderBatch({students: r.students, warnings: r.warnings});
+}
+
+$('#examSel').value = '';
+$('#examSel').onchange = e => openExam(Number(e.target.value)).catch(err => toast(String(err)));
+
+$('#btnNewExam').onclick = async () => {
+  const name = prompt('新考试的名字（例如：高二期中考试）', '');
+  if (name === null) return;
+  if (!name.trim()) return toast('名字不能为空');
+  const r = await postj('/api/exams', {name: name.trim()});
+  if (r.error) return toast(r.error);
+  await loadExams();
+  await openExam(r.exam.id);
+  toast('已新建：' + r.exam.name);
+};
+
+$('#btnRenExam').onclick = async () => {
+  const name = prompt('改成什么名字', CUR.name);
+  if (name === null || !name.trim() || name.trim() === CUR.name) return;
+  const r = await postj('/api/exam/rename', {name: name.trim()});
+  if (r.error) return toast(r.error);
+  await loadExams();
+  await openExam(CUR.id);
+  toast('已改名');
+};
+
+$('#btnDelExam').onclick = async () => {
+  const n = CUR.studentCount || 0;
+  if (!confirm(`确定删除考试「${CUR.name}」？\n它会连同 ${n} 位考生的识别结果一起删掉，**不能还原**。`)) return;
+  const r = await postj('/api/exam/delete', {});
+  if (r.error) return toast(r.error);
+  localStorage.removeItem(LS_EXAM);
+  await loadExams();
+  await openExam(null);
+  toast('已删除');
+};
 
 // ============================================================ ① 模板
 $('#btnTpl').onclick = async () => {
   const f = $('#tplFile').files[0];
   if (!f) return toast('先选择模板文件');
   const fd = new FormData(); fd.append('file', f);
-  const r = await (await fetch('/api/template', {method:'POST', body:fd})).json();
+  const r = await apijson('/api/template', {method:'POST', body: ex(fd)});
   if (r.error) { toast(r.error); return; }
-  const s = r.summary, p = s.paper;
-  $('#tplInfo').textContent = `${p.size} ${p.orientation} · ${p.w}×${p.h}mm · ${s.pages.length} 面 · 共 ${s.questionCount} 题 · 定位点 ${s.marks.style} ${s.marks.size}mm`;
-  toast('模板已载入：' + s.questionCount + ' 题 / ' + s.pages.length + ' 面');
+  $('#tplInfo').textContent = tplLine(r.summary);
+  toast('模板已载入：' + r.summary.questionCount + ' 题 / ' + r.summary.pages.length + ' 面');
+  await loadExams();                 // 列表里的「无模板」标记要跟着变
 };
 
 // ============================================================ ② 批量上传
@@ -312,10 +472,11 @@ $('#btnBatch').onclick = async () => {
   const p = params();
   fd.append('pxPerMm', p.pxPerMm); fd.append('fillMin', p.fillMin); fd.append('gap', p.gap);
   fd.append('overrides', JSON.stringify(ovr));
+  ex(fd);
 
   let r;
   try {
-    r = await (await fetch('/api/batch', {method:'POST', body:fd})).json();
+    r = await (await api('/api/batch', {method:'POST', body:fd})).json();
   } catch (err){
     r = {error: '请求失败：' + err};
   }
@@ -334,6 +495,9 @@ $('#btnBatch').onclick = async () => {
     + ` · 用时 ${dt}s`
     + ((r.roster||{}).count ? ` · 名单 ${r.roster.count} 人` : ' · 未提供名单');
   renderBatch(r);
+  await loadExams();                     // 列表里的「N 人」要跟着变
+  if (r.exam) CUR = r.exam;
+  paintExam();                           // loadExams 重建了 select，这里把选中项放回去
   toast(`识别完成：${(r.students||[]).length} 位考生，用时 ${dt}s`);
 };
 
@@ -433,13 +597,12 @@ function renderBatch(r){
       ovr[sid] = ovr[sid] || {};
       ovr[sid][inp.dataset.k] = inp.value.trim();
     });
-    const r2 = await (await fetch('/api/batch/rematch', {
-      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({overrides: ovr})
-    })).json();
+    // 补录会**存进库里**（服务端合并，不是整体替换）—— 刷新页面、重启服务都还在
+    const r2 = await postj('/api/batch/rematch', {overrides: ovr});
     if (r2.error) return toast(r2.error);
     renderBatch({students: r2.students, warnings: r2.warnings, roster: r2.roster,
                  stats: {students: (r2.students||[]).length}});
-    toast('已重新套用');
+    toast('已重新套用（补录已保存）');
   };
 }
 
@@ -453,7 +616,7 @@ $('#btnScan').onclick = async () => {
   fd.append('page', $('#pageIdx').value);
   fd.append('pxPerMm', p.pxPerMm); fd.append('fillMin', p.fillMin); fd.append('gap', p.gap);
   $('#results').innerHTML = '<div class="empty">识别中…</div>';
-  const r = await (await fetch('/api/scan', {method:'POST', body:fd})).json();
+  const r = await (await api('/api/scan', {method:'POST', body: ex(fd)})).json();
   if (r.error){ $('#results').innerHTML = `<div class="warns"><div>${esc(r.error)}</div></div>`; return; }
   renderResults(r.results || []);
 };
@@ -500,10 +663,107 @@ function renderResults(list){
 }
 
 // ============================================================ ④ 统计 / 导出
+const renderStats = r => {
+  $('#statsInfo').textContent = `${r.sheetCount} 份 · ${r.questions.length} 题` + (r.hasKey ? ' · 已按标准答案判分' : ' · 未填标准答案（仅统计分布）');
+  $('#qstats').innerHTML = `<table><thead><tr><th>题号</th><th>答案</th>${r.hasKey?'<th class="num">正确率</th><th class="num">正确</th>':''}<th>分布</th><th class="num">未填</th><th class="num">存疑</th></tr></thead><tbody>
+    ${r.questions.map(q => {
+      const dist = Object.keys(q.dist).map(k => `${k}:${q.dist[k]}`).join(' ') || '—';
+      const bar = r.hasKey ? `<div class="bar" title="${q.rate}%"><i style="width:${q.rate||0}%"></i></div>` : '';
+      return `<tr><td>${q.no}</td><td>${q.key||'—'}</td>${r.hasKey?`<td class="num">${q.rate}%${bar}</td><td class="num">${q.correct}</td>`:''}<td>${dist}</td><td class="num">${q.blank}</td><td class="num">${q.doubt}</td></tr>`;
+    }).join('')}</tbody></table>`;
+  $('#sstats').innerHTML = `<table><thead><tr><th>考生</th><th class="num">得分</th><th class="num">未填</th><th class="num">存疑</th><th>错题</th></tr></thead><tbody>
+    ${r.sheets.map(s => `<tr><td>${esc(s.name)}</td><td class="num">${s.score}${r.hasKey?`/${s.total}`:''}</td><td class="num">${s.blank}</td><td class="num">${s.doubt}</td>
+      <td>${s.wrong.map(w=>`${w.no}(${w.chose}→${w.key})`).join(' ') || '—'}</td></tr>`).join('')}</tbody></table>`;
+};
+
 $('#btnStats').onclick = async () => {
-  const r = await (await fetch('/api/stats', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({key: $('#key').value})})).json();
+  const r = await postj('/api/stats', {key: $('#key').value});
   if (r.error){ toast(r.error); return; }
+  renderStats(r);
+};
+
+// 标准答案存在考试上 —— 老师输了 20 个答案，刷新一次就没了是不能接受的
+$('#btnKey').onclick = async () => {
+  const r = await postj('/api/answer-key', {key: $('#key').value});
+  if (r.error) return toast(r.error);
+  CUR.answerKey = r.answerKey;
+  toast(r.count ? `已保存 ${r.count} 道题的答案` : '已清空标准答案');
+};
+
+function download(url, fields, filename){
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(fields)) fd.append(k, v);
+  ex(fd);
+  api(url, {method:'POST', body:fd}).then(r => r.blob()).then(b => {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = filename; a.click();
+  }).catch(err => toast('导出失败：' + err));
+}
+$('#btnCsv').onclick = () => download('/api/export.csv', {key: $('#key').value}, 'omr-answers.csv');
+$('#btnRosterCsv').onclick = () => { const a = document.createElement('a'); a.href = '/api/roster.csv?' + qid(); a.click(); };
+
+// ============================================================ ⑤ 账号管理（管理员）
+async function loadUsers(){
+  const r = await apijson('/api/users');
+  $('#userList').innerHTML = `<table><thead><tr><th>用户名</th><th>姓名</th><th>角色</th>
+      <th>最近登录</th><th>操作</th></tr></thead><tbody>
+    ${(r.users||[]).map(u => `<tr>
+      <td>${esc(u.username)}</td><td>${esc(u.display)}</td>
+      <td><select data-uid="${u.id}" data-k="role">
+        ${Object.entries({admin:'管理员', teacher:'老师', viewer:'只读'})
+          .map(([v, t]) => `<option value="${v}"${u.role === v ? ' selected' : ''}>${t}</option>`).join('')}
+      </select></td>
+      <td class="hint">${esc(u.last_login || '从未')}</td>
+      <td><button class="ghost" data-uid="${u.id}" data-k="pwd">重置口令</button>
+          <button class="ghost" data-uid="${u.id}" data-k="del">删除</button></td>
+    </tr>`).join('')}</tbody></table>`;
+
+  $$('#userList select[data-k=role]').forEach(s => { s.onchange = async () => {
+    const r2 = await postj('/api/users/role', {id: Number(s.dataset.uid), role: s.value});
+    if (r2.error) return toast(r2.error);
+    toast('已改角色');
+  };});
+  $$('#userList button[data-k=pwd]').forEach(b => { b.onclick = async () => {
+    const p = prompt('新口令（至少 8 位）。保存后这个人所有已登录的会话会被踢下线。', '');
+    if (!p) return;
+    const r2 = await postj('/api/users/password', {id: Number(b.dataset.uid), password: p});
+    if (r2.error) return toast(r2.error);
+    toast('口令已重置，该账号需要重新登录');
+  };});
+  $$('#userList button[data-k=del]').forEach(b => { b.onclick = async () => {
+    if (!confirm('确定删除这个账号？')) return;
+    const r2 = await postj('/api/users/delete', {id: Number(b.dataset.uid)});
+    if (r2.error) return toast(r2.error);
+    loadUsers();
+    toast('已删除');
+  };});
+}
+
+$('#btnAddUser').onclick = async () => {
+  const r = await postj('/api/users', {username: $('#nu').value.trim(), display: $('#nd').value.trim(),
+                                      password: $('#np').value, role: $('#nr').value});
+  if (r.error) return toast(r.error);
+  $('#nu').value = $('#nd').value = $('#np').value = '';
+  loadUsers();
+  toast('已添加账号：' + r.user.username);
+};
+
+$('#btnPwd').onclick = async () => {
+  const oldP = prompt('当前口令', ''); if (!oldP) return;
+  const newP = prompt('新口令（至少 8 位）。改完要重新登录。', ''); if (!newP) return;
+  const r = await postj('/api/password', {old: oldP, new: newP});
+  if (r.error) return toast(r.error);
+  toast('口令已改，请重新登录');
+  setTimeout(() => location.href = '/login', 700);
+};
+
+$('#btnLogout').onclick = async () => {
+  await fetch('/api/logout', {method:'POST'});
+  location.href = '/login';
+};
+
+// ============================================================ 启动
+refreshSel();
+boot().catch(e => toast('初始化失败：' + e));
   $('#statsInfo').textContent = `${r.sheetCount} 份 · ${r.questions.length} 题` + (r.hasKey ? ' · 已按标准答案判分' : ' · 未填标准答案（仅统计分布）');
   $('#qstats').innerHTML = `<table><thead><tr><th>题号</th><th>答案</th>${r.hasKey?'<th class="num">正确率</th><th class="num">正确</th>':''}<th>分布</th><th class="num">未填</th><th class="num">存疑</th></tr></thead><tbody>
     ${r.questions.map(q => {

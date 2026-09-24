@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>登录 · 答题卡扫描识别</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%232b6cb0'/><circle cx='11' cy='11' r='4' fill='%23fff'/><circle cx='21' cy='21' r='4' fill='%23fff'/></svg>">
+<style>
+:root{--bg:#f5f7fa;--card:#fff;--line:#e3e8ef;--fg:#2b3440;--mut:#7b8794;--pri:#2b6cb0;--ok:#2f9e44;--err:#d64545;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+     min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
+.box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:26px 28px;
+     width:100%;max-width:380px;box-shadow:0 2px 14px rgba(43,52,64,.06);}
+h1{font-size:17px;margin:0 0 4px;}
+.sub{color:var(--mut);font-size:12px;margin-bottom:16px;}
+label{display:block;font-size:12px;color:#4a5568;margin:10px 0 3px;}
+input{width:100%;border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-size:14px;font-family:inherit;}
+input:focus{outline:2px solid #cfe0f3;border-color:var(--pri);}
+button{width:100%;background:var(--pri);color:#fff;border:0;border-radius:6px;padding:9px 14px;
+       font-size:14px;cursor:pointer;margin-top:16px;}
+button:disabled{opacity:.5;cursor:not-allowed;}
+.hint{font-size:12px;color:var(--mut);margin-top:10px;}
+.err{background:#fff5f5;border:1px solid #f5c2c2;color:#8c2f2f;border-radius:6px;
+     padding:7px 10px;font-size:12.5px;margin-top:12px;}
+.err:empty{display:none;}
+.setup{background:#f2f8ff;border:1px solid #cfe0f3;border-radius:6px;padding:9px 11px;
+       font-size:12.5px;color:#28527a;margin-bottom:14px;}
+.row{display:flex;gap:8px;}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>🎯 答题卡扫描识别</h1>
+  <div class="sub">阅卷模板定位 + OpenCV 填涂识别</div>
+  <div id="setupTip" class="setup" style="display:none">
+    第一次使用 —— 这里还没有任何账号。请创建管理员账号（口令至少 8 位）。
+    这套系统**不预置默认口令**：默认口令等于所有人都知道的口令。
+  </div>
+  <div id="form">
+    <label>用户名</label>
+    <input id="u" autocomplete="username" autofocus>
+    <label>口令</label>
+    <input id="p" type="password" autocomplete="current-password">
+    <div id="confirmWrap" style="display:none">
+      <label>再输一次</label>
+      <input id="p2" type="password" autocomplete="new-password">
+    </div>
+    <button id="go">登录</button>
+    <div class="err" id="err"></div>
+    <div class="hint" id="hint"></div>
+  </div>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+const err = m => { $('#err').textContent = m || ''; };
+let MODE = 'login';
+
+// 回车提交
+document.addEventListener('keydown', e => { if (e.key === 'Enter') $('#go').click(); });
+
+function paint(needSetup){
+  MODE = needSetup ? 'setup' : 'login';
+  $('#setupTip').style.display = needSetup ? '' : 'none';
+  $('#confirmWrap').style.display = needSetup ? '' : 'none';
+  $('#go').textContent = needSetup ? '创建管理员并登录' : '登录';
+  document.title = (needSetup ? '创建管理员' : '登录') + ' · 答题卡扫描识别';
+  $('#p').setAttribute('autocomplete', needSetup ? 'new-password' : 'current-password');
+  $('#hint').textContent = needSetup ? '' :
+    '忘记口令只能由管理员在「账号管理」里重置。';
+}
+
+(async () => {
+  // 已经登录就直接进去；没初始化过就切成「创建管理员」。
+  const me = await (await fetch('/api/me')).json();
+  if (me.user) { location.href = '/'; return; }
+  paint(me.needSetup);
+})().catch(e => err('无法连接服务：' + e));
+
+$('#go').onclick = async () => {
+  const username = $('#u').value.trim();
+  const password = $('#p').value;
+  err('');
+  if (!username) return err('请填用户名');
+  if (!password) return err('请填口令');
+  if (MODE === 'setup'){
+    if (password.length < 8) return err('口令至少 8 位');
+    if (password !== $('#p2').value) return err('两次输的口令不一样');
+  }
+  $('#go').disabled = true;
+  try {
+    const url = MODE === 'setup' ? '/api/setup' : '/api/login';
+    const r = await (await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({username, password})})).json();
+    if (r.error) { err(r.error); $('#go').disabled = false; return; }
+    location.href = '/';
+  } catch (e) {
+    err('请求失败：' + e);
+    $('#go').disabled = false;
+  }
+};
+</script>
+</body>
+</html>
