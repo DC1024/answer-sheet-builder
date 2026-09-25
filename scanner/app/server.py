@@ -26,6 +26,7 @@ from flask import (Flask, jsonify, request, send_from_directory, Response,
 from . import omr
 from . import batch as bt
 from . import stats as st
+from . import scoring as scor
 from . import store as store_mod
 from . import auth as auth_mod
 
@@ -726,19 +727,21 @@ def gradebook():
         return jsonify({'students': [], 'exam': None, 'qnos': [], 'key': {}, 'hasKey': False,
                         'summary': {'count': 0, 'graded': 0, 'review': 0, 'avg': 0}})
     key = exam['answerKey']
+    rules = exam.get('rules') or {}
     students, _ = _students_view(exam)
     qnos = _qnos(exam, [])
     rows = []
     for s in students:
         ans = s.get('answers') or {}
         grading = s.get('grading') or {}
-        correct, eff, total, final = st.score_grading(ans, qnos, key, grading)
+        per_q, total, auto, final = scor.apply_rules(ans, qnos, key, rules, grading)
         rows.append({
             'sid': str(s.get('sid')), 'name': s.get('name') or '', 'cls': s.get('cls') or '',
             'matched': s.get('matched'), 'sidSource': s.get('sidSource'),
-            'auto': st.score(ans, qnos, key), 'total': total,
+            'auto': auto, 'total': total,
             'grading': grading,
-            'correct': {str(k): v for k, v in correct.items()},
+            'correct': {str(k): v.get('auto') for k, v in per_q.items()},
+            'per_q': {str(k): v for k, v in per_q.items()},
             'effective': final,
         })
     graded = sum(1 for r in rows if r['grading'])
@@ -787,6 +790,7 @@ def export_csv():
     exam = _exam(create=False)
     key_text = request.form.get('key', '')
     key = st.parse_key(key_text) if key_text.strip() else exam['answerKey']
+    rules = exam.get('rules') or {}
     graded = request.form.get('graded') == '1'
     ids = request.form.get('ids', '').split(',') if request.form.get('ids') else None
     sheets = _sheets(exam, ids)
@@ -808,15 +812,52 @@ def export_csv():
         row = [s.get('sid', ''), s.get('stu', ''), s.get('cls', '')] if with_id else []
         row += [s.get('name', '')] + [s['answers'].get(q, {}).get('answer') or '' for q in qnos]
         if key:
-            if graded:
-                _, _, _, final = st.score_grading(s['answers'], qnos, key, gmap.get(str(s.get('sid'))))
-                row.append(final)
-            else:
-                row.append(st.score(s['answers'], qnos, key))
+            _, total, auto, final = scor.apply_rules(
+                s['answers'], qnos, key, rules, gmap.get(str(s.get('sid'))) if graded else None)
+            v = final if graded else auto
+            # 整数分显示成整数（'4' 不是 '4.0'），规则可能出小数（半对=0.5）时保留小数。
+            row.append(int(v) if float(v).is_integer() else round(v, 2))
         rows.append(row)
     csv_text = st.to_csv(rows, head)
     return Response(csv_text, mimetype='text/csv; charset=utf-8',
                     headers={'Content-Disposition': 'attachment; filename="omr-answers.csv"'})
+
+
+@app.get('/api/rules')
+def get_rules():
+    """读当前考试的评分规则 + 每题标准答案（供规则编辑器初始化）。"""
+    exam = _exam(create=False)
+    if not exam:
+        return jsonify({'error': '还没有考试'})
+    return jsonify({
+        'exam': _exam_view(exam),
+        'rules': exam.get('rules') or {},
+        'key': exam['answerKey'],
+        'qnos': _qnos(exam, []),
+    })
+
+
+@app.post('/api/rules')
+def set_rules():
+    """保存评分规则：{题号: rule}。只存合法字段，非法丢弃。"""
+    exam = _exam(create=False)
+    if not exam:
+        return jsonify({'error': '还没有考试'})
+    body = request.get_json(silent=True) or {}
+    raw = body.get('rules')
+    if not isinstance(raw, dict):
+        return jsonify({'error': 'rules 必须是 {题号: 规则} 的字典'})
+    rules = {}
+    for k, v in raw.items():
+        r = scor.normalize_rule(v)
+        if r:
+            try:
+                rules[str(int(k))] = r
+            except (TypeError, ValueError):
+                rules[str(k)] = r
+    STORE.set_rules(exam['id'], rules)
+    return jsonify({'ok': True, 'rules': rules,
+                    'summary': '已保存 %d 条评分规则' % len(rules)})
 
 
 @app.get('/api/overlay/<rid>.png')

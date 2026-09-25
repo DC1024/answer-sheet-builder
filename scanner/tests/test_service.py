@@ -516,6 +516,50 @@ ok(mn['2026010234']['matched'] is True, '新名单里的人仍匹配')
 warns_n = ' | '.join(j.get('warnings') or [])
 ok('不在名单里' in warns_n, '提示有考号不在名单里（按新名单判定）', warns_n[:100])
 
+print('\n=== O. 评分规则：保存 / 读取 / 工作台与导出联动 ===')
+# §O 是自成一体的：当前考试（N 新建的）先存标准答案，打 19 分基线。
+r = c.post('/api/answer-key', json={'key': KEY_S01})
+eq((r.get_json() or {}).get('count'), 19, '§O 给当前考试存标准答案（19 题）')
+gj = c.get('/api/gradebook').get_json() or {}
+row = next((x for x in gj.get('students') or [] if x['sid'] == '2026010234'), {})
+eq(row.get('auto'), 19, '无规则基线：传统判分 19')
+
+r = c.get('/api/rules')
+j = r.get_json() or {}
+ok(r.status_code == 200 and 'rules' in j and 'key' in j and 'qnos' in j,
+   'GET /api/rules 返回规则+答案+题号', str(r.status_code))
+# 张伟明 19 题全对：第 1 题改 2 分、第 2 题配漏选半（但全对=满分2）→ 19 + 1 + 1 = 21
+RULES_O = {
+    '1': {'type': 'single', 'key': 'D', 'points': 2},
+    '2': {'type': 'multi_partial', 'key': j['key'].get('2', ''), 'points': 2, 'partial': 0.5},
+}
+r = c.post('/api/rules', json={'rules': RULES_O})
+ok(r.status_code == 200 and (r.get_json() or {}).get('ok'), 'POST /api/rules 保存成功',
+   str(r.get_json())[:80])
+eq((r.get_json() or {}).get('summary'), '已保存 2 条评分规则', '保存提示带条数')
+r = c.get('/api/rules')
+j = r.get_json() or {}
+eq(set(j.get('rules') or {}), {'1', '2'}, '规则读回来是刚存的 2 条')
+eq((j['rules'].get('1') or {}).get('points'), 2.0, '第 1 题分值 2 落库')
+eq((j['rules'].get('2') or {}).get('type'), 'multi_partial', '第 2 题规则类型落库')
+gj = c.get('/api/gradebook').get_json() or {}
+row = next((x for x in gj.get('students') or [] if x['sid'] == '2026010234'), {})
+eq(row.get('auto'), 21, '工作台 auto 按规则计分：2+2+17×1=21')
+# POST 是整体替换：非法类型被丢弃，没提到的旧规则也一并消失
+r = c.post('/api/rules', json={'rules': {'1': {'type': 'magic'}, '4': {'type': 'single', 'points': 5}}})
+j = r.get_json() or {}
+eq(set(j.get('rules') or {}), {'4'}, '整体替换：非法类型丢弃、旧规则不残留')
+eq((j['rules'].get('4') or {}).get('points'), 5.0, '第 4 题 5 分落库')
+gj = c.get('/api/gradebook').get_json() or {}
+row = next((x for x in gj.get('students') or [] if x['sid'] == '2026010234'), {})
+eq(row.get('auto'), 23, '只剩第 4 题 5 分规则：5 + 18×1 = 23')
+# 恢复：清空规则，回到传统分
+r = c.post('/api/rules', json={'rules': {}})
+eq(r.get_json() or {}, {'ok': True, 'rules': {}, 'summary': '已保存 0 条评分规则'}, '规则可清空')
+gj = c.get('/api/gradebook').get_json() or {}
+row2 = next((x for x in gj.get('students') or [] if x['sid'] == '2026010234'), {})
+eq(row2.get('auto'), 19, '清空规则后回到传统 19 分')
+
 print('\n' + '=' * 56)
 if FAILS:
     print(f'⚠️  {len(FAILS)} 项未通过：')

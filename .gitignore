@@ -14,3 +14,6 @@ node_modules/
 # 本地临时文件
 *.tmp
 _rendertest.mjs
+
+# UI 走查输出 / 探针截图
+scanner/_ui_out/

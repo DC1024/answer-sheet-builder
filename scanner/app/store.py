@@ -16,7 +16,7 @@ import sqlite3
 import threading
 from datetime import datetime, timedelta
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # 表结构 v1。全部 JSON 大字段（template / roster / answers / data）都按「哑存储」处理：
 # 识别器以后多几个字段不用改表结构 —— 这也是把整个学生字典塞进 data 一列的原因。
@@ -59,7 +59,8 @@ CREATE TABLE exams (
   roster_source TEXT,
   overrides    TEXT,                    -- 人工补录 {sid: {name, cls}}，必须跟着考试一起活下来
   active_kind  TEXT,                    -- 'batch' | 'scan' | NULL
-  active_ids   TEXT                     -- JSON 数组
+  active_ids   TEXT,                    -- JSON 数组
+  rules        TEXT                     -- 自动评分规则 {题号: rule}（v2）
 );
 
 -- 批量结果：一个学生一行。
@@ -91,7 +92,12 @@ CREATE TABLE exam_scans (
 
 # 以后加字段用：[(2, _migrate_to_v2)]，_migrate_to_v2(conn) 里写 ALTER/CREATE。
 # 注意**只许加法**：老库里的数据是老师的东西，宁可留着一列没用，也不要 DROP。
-MIGRATIONS = []
+def _migrate_to_v2(conn):
+    """v2：加 exams.rules —— 自动评分规则。老库升级，缺列才补。"""
+    cols = [r['name'] for r in conn.execute('PRAGMA table_info(exams)').fetchall()]
+    if 'rules' not in cols:
+        conn.execute('ALTER TABLE exams ADD COLUMN rules TEXT')
+MIGRATIONS = [(2, _migrate_to_v2)]
 
 
 class StoreError(Exception):
@@ -258,6 +264,12 @@ class Store:
             # 注意别写成 `int(_loads(row['v'], 1) or 1)` —— `0 or 1` 是 1，
             # 会把「版本 0」这种最老的库当成最新版，守卫就白写了。
             ver = int(_loads(row['v'], 1)) if row else 1
+            if ver < 1:
+                # 版本 0 不是合法起点 —— 发布过的最早 schema 就是 v1。
+                # 声称自己比 v1 还旧的库只能是结构损坏，不许迁移「修复」，必须报错。
+                raise StoreError(
+                    f'数据库结构版本是 {ver}，低于最早支持的版本 1 —— 库已损坏，'
+                    f'拒绝打开（静默用一个结构不对的库，坏的是老师的数据）')
             for target, fn in MIGRATIONS:
                 if ver < target:
                     fn(self.conn)
@@ -413,6 +425,7 @@ class Store:
         d['templateJson'] = _loads(d.pop('template'), None)
         d['tplSummary'] = _loads(d.pop('tpl_summary'), None)
         d['answerKey'] = _load_key(d.pop('answer_key'))
+        d['rules'] = _loads(d.pop('rules'), {}) or {}
         d['roster'] = _loads(d.pop('roster'), {}) or {}
         d['rosterCols'] = _loads(d.pop('roster_cols'), {}) or {}
         d['overrides'] = _loads(d.pop('overrides'), {}) or {}
@@ -441,6 +454,14 @@ class Store:
     def set_answer_key(self, exam_id, key):
         self._exec('UPDATE exams SET answer_key=?, updated_at=? WHERE id=?',
                    (_dump_key(key), now(), exam_id))
+
+    def set_rules(self, exam_id, rules):
+        self._exec('UPDATE exams SET rules=?, updated_at=? WHERE id=?',
+                   (_dumps(rules or {}), now(), exam_id))
+
+    def get_rules(self, exam_id):
+        row = self._one('SELECT rules FROM exams WHERE id=?', (exam_id,))
+        return _loads(row['rules'], {}) or {} if row else {}
 
     def set_overrides(self, exam_id, overrides):
         self._exec('UPDATE exams SET overrides=?, updated_at=? WHERE id=?',

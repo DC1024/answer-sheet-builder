@@ -99,6 +99,34 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 #gbModal.on{display:block;}
 #gbModal .box{background:#fff;border-radius:12px;max-width:780px;margin:0 auto;padding:18px 22px;box-shadow:0 12px 48px rgba(0,0,0,.32);}
 #gbModal .box h3{margin:0;font-size:15px;}
+/* ---- 评分规则弹窗 ---- */
+#ruleModal{position:fixed;inset:0;background:rgba(20,24,30,.55);z-index:70;display:none;overflow:auto;padding:30px;}
+#ruleModal.on{display:block;}
+#ruleModal .box{background:#fff;border-radius:12px;max-width:900px;margin:0 auto;padding:18px 22px;box-shadow:0 12px 48px rgba(0,0,0,.32);}
+#ruleModal table{width:100%;border-collapse:collapse;font-size:12.5px}
+#ruleModal th,#ruleModal td{border-bottom:1px solid var(--line);padding:5px 6px;text-align:left;vertical-align:middle}
+#ruleModal th{position:sticky;top:0;background:#fff;z-index:1}
+#ruleModal input,#ruleModal select{padding:3px 6px;border:1px solid var(--line);border-radius:6px}
+#ruleModal .lx{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+/* ---- 成绩单（打印：一个学生一页）---- */
+#printRoot{display:none}
+.sheet{background:#fff;color:#000}
+@media print{
+  body > *:not(#printRoot){display:none !important}
+  #printRoot{display:block !important}
+  .sheet{page-break-after:always;padding:18px 26px;font-size:12.5px;line-height:1.55}
+  .sheet:last-child{page-break-after:auto}
+  .sheet h1{font-size:19px;margin:0 0 2px}
+  .sheet .meta{color:#333;margin-bottom:8px}
+  .sheet .score{display:flex;gap:26px;align-items:baseline;border:1.5px solid #000;border-radius:8px;padding:8px 16px;margin:8px 0 12px}
+  .sheet .score b{font-size:26px}
+  .sheet .score .lab{font-size:11px;color:#444;display:block}
+  .sheet table{width:100%;border-collapse:collapse;font-size:11.5px}
+  .sheet th,.sheet td{border:1px solid #999;padding:3px 6px;text-align:center}
+  .sheet th{background:#f0f0f0}
+  .sheet .sign{display:flex;justify-content:space-between;margin-top:26px;color:#333}
+  .sheet .note{border-left:3px solid #888;padding:2px 10px;margin:6px 0;color:#333}
+}
 </style>
 </head>
 <body>
@@ -181,6 +209,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
     <div class="row">
       <button id="btnStats" class="ghost">生成统计</button>
       <button id="btnKey" class="ghost">保存标准答案</button>
+      <button id="btnRules" class="ghost">评分规则…</button>
       <button id="btnCsv" class="ghost">导出成绩 CSV</button>
       <button id="btnRosterCsv" class="ghost">导出名单对账 CSV</button>
       <span class="hint" id="statsInfo"></span>
@@ -199,6 +228,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
       <label class="f"><input type="checkbox" id="gbReviewOnly"> 只看待复核</label>
       <span class="hint" id="gbSum"></span>
       <span style="flex:1"></span>
+      <button id="gbPrint" class="ghost">打印成绩单（每人一页）</button>
       <button id="gbExport" class="ghost">导出复核成绩 CSV</button>
     </div>
     <div id="gbBody"><div class="empty">还没有识别结果，先去②批量上传</div></div>
@@ -224,6 +254,33 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 
 <div id="lb" title="点击任意处关闭"><img alt="校对图（原生分辨率）"></div>
 <div id="toast"></div>
+
+<!-- 评分规则弹窗：逐题配分值 / 漏选半对 / 七选三阶梯 / 倒扣 -->
+<div id="ruleModal"><div class="box">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px">
+    <h3>评分规则 <span class="hint" style="font-weight:400">只对「已保存标准答案」的题生效；没配规则的题按传统「答对 1 分」计</span></h3>
+    <button class="ghost" id="ruleClose">关闭</button>
+  </div>
+  <div class="row lx">
+    <b style="font-size:12.5px">批量设置：</b>
+    <select id="ruleBatchType" style="width:210px">
+      <option value="single">单选 · 自定义分值</option>
+      <option value="multi_partial">多选 · 漏选得部分分</option>
+      <option value="pick_k">多选 · 阶梯（七选三）</option>
+    </select>
+    <label class="f">分值 <input type="number" id="ruleBatchPoints" value="2" min="0" step="0.5" style="width:64px"></label>
+    <button class="ghost" id="ruleApplyAll">应用到全部有答案的题</button>
+    <button class="ghost" id="ruleClearAll">全部恢复传统计分</button>
+  </div>
+  <div id="ruleBody" style="max-height:52vh;overflow:auto"></div>
+  <div class="row" style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+    <button id="ruleSave">保存规则</button>
+    <span class="hint">规则随考试存盘；多选题的标准答案直接填多个字母（如 2ABD）。保存后自动重算工作台得分。</span>
+  </div>
+</div></div>
+
+<!-- 成绩单打印容器：屏幕上隐藏，打印时只显示它（一个学生一页） -->
+<div id="printRoot"></div>
 
 <!-- 逐生复核弹窗：逐题翻正/改判 + 复核分 + 待复核标记 + 备注 -->
 <div id="gbModal"><div class="box">
@@ -826,7 +883,7 @@ function gbEffective(stu, grading){
     const kv = GB.key[q];
     if (!kv) continue;
     total++;
-    const c = (String(q) in ov) ? !!ov[String(q)] : ((stu.answers[q] || {}).answer === kv);
+    const c = (String(q) in ov) ? !!ov[String(q)] : (((stu.answers || {})[q] || {}).answer === kv);
     if (c) eff++;
   }
   const ms = grading.manualScore;
@@ -938,7 +995,214 @@ $('#gbExport').onclick = () => download('/api/export.csv', {key: $('#key').value
 $('#gbClose').onclick = () => $('#gbModal').classList.remove('on');
 $('#gbSave').onclick = saveGrade;
 $('#gbModal').addEventListener('click', e => { if (e.target.id === 'gbModal') $('#gbModal').classList.remove('on'); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#gbModal').classList.remove('on'); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape'){ $('#gbModal').classList.remove('on'); $('#ruleModal').classList.remove('on'); } });
+
+// ============================================================ ④½ 评分规则编辑器
+// 规则模型与后端 app/scoring.py 对齐：
+//   single         单选自定义分值（答错可倒扣，未答不罚）
+//   multi_partial  多选漏选得部分分（错选 0 或倒扣）
+//   pick_k         按选对个数查阶梯给分（七选三典型 0:0 1:1 2:2 3:4）
+let REDIT = {};                     // {题号(str): 草稿规则}
+const RULE_LABEL = {single: '单选 · 自定义分值', multi_partial: '多选 · 漏选得部分分',
+                    pick_k: '多选 · 阶梯（七选三）'};
+const fmtScore = v => { const n = +v; return Number.isInteger(n) ? String(n)
+                        : String(Math.round(n * 100) / 100); };
+const ladText = lad => Object.entries(lad || {}).sort((a, b) => a[0] - b[0])
+                        .map(([k, v]) => k + ':' + v).join('  ');
+const ladParse = t => { const o = {};
+  for (const m of (t || '').matchAll(/(\d+)\s*[:：=]\s*(\d+(?:\.\d+)?)/g)) o[m[1]] = parseFloat(m[2]);
+  return o; };
+
+async function openRules(){
+  const j = await apijson('/api/rules?' + qid());
+  if (j.error) return toast(j.error);
+  if (!(j.qnos || []).length) return toast('还没有题目 —— 先上传模板并识别卷子');
+  if (!Object.keys(j.key || {}).length) return toast('请先在④填好并保存标准答案');
+  REDIT = {};
+  for (const [q, r] of Object.entries(j.rules || {}))
+    REDIT[q] = {type: r.type, points: r.points, partial: r.partial,
+                ladder: r.ladder || {}, wrong_penalty: r.wrong_penalty || 0};
+  renderRules(j.qnos, j.key);
+  $('#ruleModal').classList.add('on');
+}
+
+function renderRules(qnos, key){
+  const keyed = (qnos || []).filter(q => key[q]);
+  if (!keyed.length){ $('#ruleBody').innerHTML = '<div class="empty">标准答案里没有题 —— 先在④保存标准答案</div>'; return; }
+  $('#ruleBody').innerHTML = `<table><thead><tr>
+    <th style="width:44px">题号</th><th style="width:70px">答案</th><th style="width:190px">规则</th>
+    <th>计分参数</th></tr></thead><tbody>
+    ${keyed.map(q => {
+      const r = REDIT[q] || {};
+      const pts = r.points != null ? r.points : 1;
+      let extra = '<span class="hint">（传统计分：答对 1 分）</span>';
+      if (r.type === 'single')
+        extra = `<label class="f">分值 <input type="number" data-f="points" value="${pts}" min="0" step="0.5" style="width:64px"></label>
+                 <label class="f">答错倒扣 <input type="number" data-f="wrong_penalty" value="${r.wrong_penalty || 0}" min="0" step="0.5" style="width:64px"></label>`;
+      else if (r.type === 'multi_partial')
+        extra = `<label class="f">满分 <input type="number" data-f="points" value="${pts}" min="0" step="0.5" style="width:64px"></label>
+                 <label class="f">漏选得 <input type="number" data-f="partial" value="${r.partial != null ? r.partial : 0.5}" min="0" max="1" step="0.05" style="width:64px"></label>（比例）
+                 <label class="f">错选倒扣 <input type="number" data-f="wrong_penalty" value="${r.wrong_penalty || 0}" min="0" step="0.5" style="width:60px"></label>`;
+      else if (r.type === 'pick_k')
+        extra = `<label class="f">阶梯（对几个:得几分） <input type="text" data-f="ladder" value="${esc(ladText(r.ladder) || '0:0  1:1  2:2  3:4')}" style="width:170px"></label>
+                 <label class="f">选错每个倒扣 <input type="number" data-f="wrong_penalty" value="${r.wrong_penalty || 0}" min="0" step="0.5" style="width:60px"></label>`;
+      return `<tr data-q="${q}">
+        <td><b>${q}</b></td><td>${esc(key[q])}</td>
+        <td><select data-f="type" style="width:100%">
+          <option value="">传统（答对1分）</option>
+          ${Object.entries(RULE_LABEL).map(([v, t]) =>
+            `<option value="${v}"${r.type === v ? ' selected' : ''}>${t}</option>`).join('')}
+        </select></td>
+        <td><div class="lx">${extra}</div></td></tr>`;
+    }).join('')}</tbody></table>`;
+}
+
+// 从 DOM 读一行回 REDIT（type 为空 → 删除该题规则 = 传统计分）
+function collectRuleRow(q){
+  const tr = document.querySelector(`#ruleBody tr[data-q="${q}"]`);
+  if (!tr) return;
+  const g = f => tr.querySelector(`[data-f="${f}"]`);
+  const type = g('type').value;
+  if (!type){ delete REDIT[q]; return; }
+  const num = (el, d) => { if (!el) return d; const v = parseFloat(el.value); return isNaN(v) ? d : v; };
+  const r = {type, points: num(g('points'), 1)};
+  if (type === 'multi_partial') r.partial = num(g('partial'), 0.5);
+  if (type === 'pick_k'){
+    r.ladder = ladParse(g('ladder').value);
+    if (!Object.keys(r.ladder).length) r.ladder = {0: 0, 1: 1, 2: 2, 3: r.points};   // 留空 → 七选三式默认
+  }
+  const wp = num(g('wrong_penalty'), 0);
+  if (wp > 0) r.wrong_penalty = wp;
+  REDIT[q] = r;
+}
+$('#btnRules').onclick = () => openRules().catch(e => toast(String(e)));
+$('#ruleClose').onclick = () => $('#ruleModal').classList.remove('on');
+$('#ruleModal').addEventListener('click', e => { if (e.target.id === 'ruleModal') $('#ruleModal').classList.remove('on'); });
+$('#ruleBody').addEventListener('change', e => {
+  const tr = e.target.closest('tr[data-q]'); if (!tr) return;
+  const q = tr.dataset.q;
+  if (e.target.dataset.f === 'type'){ collectRuleRow(q); renderRulesRefreshRow(q); }
+});
+$('#ruleBody').addEventListener('input', e => {
+  const tr = e.target.closest('tr[data-q]'); if (!tr) return;
+  collectRuleRow(tr.dataset.q);
+});
+// 规则类型切换后重画该行参数区（其它行不动，免得输入到一半被打断）
+function renderRulesRefreshRow(q){
+  const tr = document.querySelector(`#ruleBody tr[data-q="${q}"]`); if (!tr) return;
+  const sel = tr.querySelector('select[data-f="type"]');
+  const td = tr.lastElementChild, r = REDIT[q] || {};
+  const pts = r.points != null ? r.points : 1;
+  let extra = '<span class="hint">（传统计分：答对 1 分）</span>';
+  if (r.type === 'single')
+    extra = `<label class="f">分值 <input type="number" data-f="points" value="${pts}" min="0" step="0.5" style="width:64px"></label>
+             <label class="f">答错倒扣 <input type="number" data-f="wrong_penalty" value="${r.wrong_penalty || 0}" min="0" step="0.5" style="width:64px"></label>`;
+  else if (r.type === 'multi_partial')
+    extra = `<label class="f">满分 <input type="number" data-f="points" value="${pts}" min="0" step="0.5" style="width:64px"></label>
+             <label class="f">漏选得 <input type="number" data-f="partial" value="${r.partial != null ? r.partial : 0.5}" min="0" max="1" step="0.05" style="width:64px"></label>（比例）
+             <label class="f">错选倒扣 <input type="number" data-f="wrong_penalty" value="${r.wrong_penalty || 0}" min="0" step="0.5" style="width:60px"></label>`;
+  else if (r.type === 'pick_k')
+    extra = `<label class="f">阶梯（对几个:得几分） <input type="text" data-f="ladder" value="${esc(ladText(r.ladder) || '0:0  1:1  2:2  3:4')}" style="width:170px"></label>
+             <label class="f">选错每个倒扣 <input type="number" data-f="wrong_penalty" value="${r.wrong_penalty || 0}" min="0" step="0.5" style="width:60px"></label>`;
+  td.innerHTML = `<div class="lx">${extra}</div>`;
+  // select 换行渲染会重建 DOM —— 把类型重新写回去
+  const ns = td.parentElement.querySelector('select[data-f="type"]');
+  if (ns) ns.value = sel.value;
+}
+$('#ruleApplyAll').onclick = () => {
+  const type = $('#ruleBatchType').value;
+  const pts = parseFloat($('#ruleBatchPoints').value) || 1;
+  const qnos = [...document.querySelectorAll('#ruleBody tr[data-q]')].map(tr => tr.dataset.q);
+  if (!qnos.length) return toast('没有可设置的题');
+  for (const q of qnos){
+    const r = {type, points: pts};
+    if (type === 'multi_partial') r.partial = 0.5;
+    if (type === 'pick_k') r.ladder = {0: 0, 1: 1, 2: 2, 3: pts};
+    REDIT[q] = r;
+  }
+  rerenderAllRules();
+  toast(`已把 ${qnos.length} 题设为「${RULE_LABEL[type]}」，确认参数后点保存`);
+};
+$('#ruleClearAll').onclick = () => { REDIT = {}; rerenderAllRules(); toast('已全部恢复传统计分，点保存生效'); };
+function rerenderAllRules(){
+  // 从行上取回题号与答案重画（key 存在 data 上）
+  const rows = [...document.querySelectorAll('#ruleBody tr[data-q]')].map(tr =>
+    ({q: tr.dataset.q, key: tr.children[1].textContent}));
+  if (!rows.length) return;
+  $('#ruleBody').innerHTML = `<table><thead><tr>
+    <th style="width:44px">题号</th><th style="width:70px">答案</th><th style="width:190px">规则</th>
+    <th>计分参数</th></tr></thead><tbody>
+    ${rows.map(({q, key}) => {
+      const r = REDIT[q] || {};
+      const pts = r.points != null ? r.points : 1;
+      let extra = '<span class="hint">（传统计分：答对 1 分）</span>';
+      if (r.type === 'single')
+        extra = `<label class="f">分值 <input type="number" data-f="points" value="${pts}" min="0" step="0.5" style="width:64px"></label>
+                 <label class="f">答错倒扣 <input type="number" data-f="wrong_penalty" value="${r.wrong_penalty || 0}" min="0" step="0.5" style="width:64px"></label>`;
+      else if (r.type === 'multi_partial')
+        extra = `<label class="f">满分 <input type="number" data-f="points" value="${pts}" min="0" step="0.5" style="width:64px"></label>
+                 <label class="f">漏选得 <input type="number" data-f="partial" value="${r.partial != null ? r.partial : 0.5}" min="0" max="1" step="0.05" style="width:64px"></label>（比例）
+                 <label class="f">错选倒扣 <input type="number" data-f="wrong_penalty" value="${r.wrong_penalty || 0}" min="0" step="0.5" style="width:60px"></label>`;
+      else if (r.type === 'pick_k')
+        extra = `<label class="f">阶梯（对几个:得几分） <input type="text" data-f="ladder" value="${esc(ladText(r.ladder) || '0:0  1:1  2:2  3:4')}" style="width:170px"></label>
+                 <label class="f">选错每个倒扣 <input type="number" data-f="wrong_penalty" value="${r.wrong_penalty || 0}" min="0" step="0.5" style="width:60px"></label>`;
+      return `<tr data-q="${q}">
+        <td><b>${q}</b></td><td>${esc(key)}</td>
+        <td><select data-f="type" style="width:100%">
+          <option value="">传统（答对1分）</option>
+          ${Object.entries(RULE_LABEL).map(([v, t]) =>
+            `<option value="${v}"${r.type === v ? ' selected' : ''}>${t}</option>`).join('')}
+        </select></td>
+        <td><div class="lx">${extra}</div></td></tr>`;
+    }).join('')}</tbody></table>`;
+}
+$('#ruleSave').onclick = async () => {
+  // 先把当前 DOM 状态收齐（防止最后一行没触发 input）
+  for (const tr of document.querySelectorAll('#ruleBody tr[data-q]')) collectRuleRow(tr.dataset.q);
+  const rules = {};
+  for (const [q, r] of Object.entries(REDIT)) if (r && r.type) rules[q] = r;
+  const resp = await postj('/api/rules', {rules});
+  if (resp.error) return toast(resp.error);
+  toast(resp.summary || '评分规则已保存');
+  $('#ruleModal').classList.remove('on');
+  loadGradebook().catch(() => {});     // 得分变了，工作台跟着刷新
+};
+
+// ============================================================ ⑥½ 成绩单打印（一个学生一页）
+function sheetHtml(s){
+  const per = s.per_q || {};
+  const qrows = (GB.qnos || []).filter(q => per[q] && per[q].key).map(q => {
+    const d = per[q];
+    const cls = d.correct === true ? '' : (d.correct === false ? ' style="background:#fdeaea"' : '');
+    return `<tr${cls}><td>${q}</td><td>${esc(d.selected || '—')}</td><td>${esc(d.key)}</td>
+            <td>${esc(d.verdict || '')}</td><td>${fmtScore(d.score)}</td></tr>`;
+  }).join('');
+  const name = (CUR && CUR.name) || '';
+  const today = new Date().toISOString().slice(0, 10);
+  const note = s.grading && s.grading.note
+    ? `<div class="note"><b>老师备注：</b>${esc(s.grading.note)}</div>` : '';
+  const badge = s.grading && s.grading.review ? ' <b style="color:#b00">［待复核］</b>' : '';
+  return `<section class="sheet">
+    <h1>${esc(name)} · 成绩单</h1>
+    <div class="meta">考号 <b>${esc(s.sid)}</b>　姓名 <b>${esc(s.name || '—')}</b>　班级 ${esc(s.cls || '—')}${badge}
+      　　打印日期 ${today}</div>
+    <div class="score">
+      <div><span class="lab">得分（含人工复核）</span><b>${GB.hasKey ? fmtScore(s.effective) : '—'}</b> / ${s.total}</div>
+      <div><span class="lab">原始分（纯自动）</span><b>${GB.hasKey ? fmtScore(s.auto) : '—'}</b> / ${s.total}</div>
+      <div><span class="lab">判分依据</span>标准答案 + 评分规则</div>
+    </div>
+    ${note}
+    <table><thead><tr><th>题号</th><th>作答</th><th>标准答案</th><th>判定</th><th>得分</th></tr></thead>
+      <tbody>${qrows || '<tr><td colspan="5">无标准答案，未判分</td></tr>'}</tbody></table>
+    <div class="sign"><span>学生签名 __________________</span><span>老师签名 __________________</span></div>
+  </section>`;
+}
+$('#gbPrint').onclick = () => {
+  if (!GB.hasKey) return toast('请先在④填好并保存标准答案，再打印成绩单');
+  if (!(GB.rows || []).length) return toast('还没有考生 —— 先去②批量上传');
+  $('#printRoot').innerHTML = GB.rows.map(sheetHtml).join('');
+  window.print();
+};
 
 // ============================================================ 启动
 refreshSel();

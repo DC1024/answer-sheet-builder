@@ -6,6 +6,10 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added / 新增
+- **扫描服务：自定义评分规则**。④汇总统计新增「评分规则」编辑器，逐题（或批量）设置计分方式：**单选自定义分值**（答错可倒扣、未答不罚）、**多选漏选得部分分**（如漏选得一半，错选 0 或倒扣）、**按选对个数阶梯给分**（七选三典型 `对1个1分、对2个2分、对3个4分`）。规则随考试存盘（库结构 v2 加 `exams.rules`），工作台 / 复核 / 成绩导出全部联动重算；没配规则的题保持传统「答对 1 分」，老考试行为不变。多选题学生的实际涂选从识别时的逐选项墨迹推导，无需重新识别。
+  **Scanner: custom scoring rules** — a per-question rule editor (with batch apply) supporting custom-points single choice (optional wrong-answer penalty), multi-choice partial credit (e.g. half points for missing selections) and ladder scoring by number of correct picks (e.g. 七选三 1/2/4). Rules persist with the exam (schema v2 `exams.rules`) and re-drive the gradebook, review flow and CSV export; questions without a rule keep the legacy 1-point behaviour. A student's multi-bubble selections are derived from per-option ink recorded at recognition time.
+- **扫描服务：成绩单打印（一个学生一页）**。阅卷工作台一键「打印成绩单」：每位学生一页 A4（得分 / 原始分 / 逐题作答与判定 / 老师备注 / 师生签名栏），走浏览器打印即可存成 PDF，服务端零新依赖。
+  **Scanner: printable per-student score sheets** — one A4 page per student (scores, per-question breakdown, teacher note, signature lines) via the browser's print-to-PDF; no new server dependencies.
 - **扫描服务：批量上传（一个班一次传完）**。可以丢 **zip 压缩包**、**整个文件夹**（浏览器递归读取，保留目录结构）或一堆散图；按考号自动归组、多页自动合并成一份卷子，跨目录同考号会标为「疑似重复」。
   **Scanner: batch upload** — drop a **zip**, a **whole folder** (recursively read in the browser, directory structure preserved) or a pile of loose images; sheets are grouped by candidate number and multi-page sets merged into one paper, with cross-directory duplicates flagged.
 - **扫描服务：学生名单匹配**。上传 `考号,姓名,班级` 的 CSV/TSV（Excel 导出的 GBK 也能读，表头别名宽松匹配），自动贴上姓名班级，并列出**待人工确认队列**：考号不在名单里、名单里有人没交卷、页序异常等；补录后点「重新套用」即可，**只改标注、不重新识别**。名单也可以直接放进 zip 里，服务自己找。
