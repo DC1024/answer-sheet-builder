@@ -34,6 +34,9 @@ import cv2
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..'))
+# 容器内 app 装在 /srv（见 Dockerfile），本地跑则是仓库根 —— 两条路都要能 import
+if not os.path.isdir(os.path.join(HERE, '..', 'app')) and os.path.isdir('/srv/app'):
+    sys.path.insert(0, '/srv')
 from app import omr, hwletter  # noqa: E402
 
 LET = 'ABCD'
