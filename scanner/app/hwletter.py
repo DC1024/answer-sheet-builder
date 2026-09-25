@@ -231,6 +231,24 @@ def _features(g):
     #   D 中部左右都有墨（半圆环，只是笔画没收拢没检出洞）→ mid_right 大
     #   A 的两腿 / B 的双环同理都有右侧墨
     f['mid_left'], f['mid_right'] = _side_ink(ys0 + int(gh * 0.40), ys0 + max(int(gh * 0.60), int(gh * 0.40) + 1))
+
+    # 上/中/下 三段的墨密度 —— 区分 D 的半圆与 B 的双环：
+    #   D 的中部是空的（只剩左竖 + 右弧两条边）→ 中部墨 ≈ 甚至少于两端
+    #   B 的两个环在中部交汇成"腰"       → 中部墨明显多于两端
+    # 实测真值 D 的「中部−两端」≈ 0.00，真值 B ≈ +0.15，方向相反，判别力很强。
+    def _band_ink(y_from, y_to):
+        sl = g[max(0, y_from):max(0, y_to)]
+        return float((sl > 0).sum()) / max(1, sl.size)
+
+    s1, s2 = int(gh * 0.33), int(gh * 0.67)
+    i_top = _band_ink(ys0, ys0 + max(1, s1))
+    i_mid = _band_ink(ys0 + s1, ys0 + max(s2, s1 + 1))
+    i_bot = _band_ink(ys0 + s2, ys1 + 1)
+    f['ink_top'] = round(i_top, 3)
+    f['ink_mid'] = round(i_mid, 3)
+    f['ink_bot'] = round(i_bot, 3)
+    ends = (i_top + i_bot) / 2.0
+    f['mid_over_ends'] = round(i_mid / ends, 3) if ends > 1e-6 else 1.0
     return f
 
 
@@ -269,14 +287,24 @@ def classify(glyph):
         elif dw > 0.25:                              # 底宽 >> 顶宽 → A 的两腿
             s['A'] += 1.5
             s['C'] -= 1.0
-        elif md > 2.0:                               # 右弧重 → D
+        elif f['top_w'] < 0.30:                      # 尖顶 → A
+            # 两腿张开得不明显的 A（dw 不够）靠尖顶抓：实测真值 A 顶宽 0.22，
+            # 真值 B 顶宽 0.47（B 的上环顶是平的），差一倍多。
+            s['A'] += 1.2
+            s['B'] -= 0.5
+            s['C'] -= 0.8
+        elif md > 3.0:                               # 右弧明显偏重 → D
             s['D'] += 1.5
             s['C'] -= 1.0
-        else:                                        # 左右合围且均衡 → 环形，绝不是 C
-            s['B'] += 0.8
+        elif f['mid_over_ends'] >= 0.95:
+            # 中部墨不少于两端 → B 的两个环在这里交汇成「腰」
+            s['B'] += 1.2
             s['C'] -= 1.2
-            s['A'] += 0.2
-            s['D'] += 0.2
+        else:
+            # 中部比两端空 → D 的半圆：这里只剩左竖 + 右弧两条边
+            # （实测真值 D 的 mid_over_ends≈0.91，真值 B≈1.21，方向相反）
+            s['D'] += 1.2
+            s['C'] -= 1.2
         # C 是瘦长开放形；若是矮胖方形（A/B/D 破坏到洞丢失），C 不应太自信
         if f['aspect'] > 0.85:
             s['C'] -= 0.4
@@ -288,10 +316,25 @@ def classify(glyph):
         s['A'] += 1.0
         s['D'] += 1.0
         ha, hcy, hch, hcx = f['hole_a'], f['hole_cy'], f['hole_h'], f['hole_cx']
-        # 洞宽窄（<0.42）→ B 的双环上下连通成了一个细长洞（real30 实测 B 宽 0.35 vs D 0.51）
+        # 洞窄（<0.42）有两种可能：B 的双环上下连通成一个细长洞，或 D 半圆里
+        # 那个贯穿全高的竖长洞。用洞的**高宽比**分开 —— 实测被误判成 B 的 D
+        # 洞高 0.64 / 洞宽 0.37（比 1.7），而判对的 B 是 0.19 / 0.19（比 1.0）。
         if f['hole_w'] < 0.42:
-            s['B'] += 1.4
-            s['D'] -= 0.8
+            if f['hole_h'] > 0.5 and f['top_w'] < 0.45:
+                # 竖长且贯穿 + 顶不宽 → D 的半圆内腔。
+                # 顶宽这个附加条件是必须的：印刷体 B 的双环上下连通后**同样是
+                # 竖长洞**（实测 hole_w 0.35 / hole_h 0.73），但它的上环顶是平的
+                # （top_w 0.52），而 D 顶不宽（0.39）—— 只凭洞形会把这类 B 判成 D。
+                s['D'] += 1.2
+                s['B'] -= 0.4
+            else:
+                s['B'] += 1.4
+                s['D'] -= 0.8
+        # 尖顶 vs 平顶（同零洞分支的判据，实测 A 顶宽 0.22 / B 0.47）
+        if f['top_w'] < 0.30:
+            s['A'] += 1.0
+            s['B'] -= 0.6
+            s['D'] -= 0.4
         # D：洞大且贯穿
         if hch > 0.55:
             s['D'] += 1.0
