@@ -127,6 +127,17 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
   .sheet .sign{display:flex;justify-content:space-between;margin-top:26px;color:#333}
   .sheet .note{border-left:3px solid #888;padding:2px 10px;margin:6px 0;color:#333}
 }
+/* ---- ⑦ 成绩分析：直方图（内联，无外部库）---- */
+#anHist .bars{display:flex;align-items:flex-end;gap:4px;height:150px;padding:18px 2px 0;border-bottom:1px solid var(--line)}
+#anHist .bar{flex:1;background:#2f7fc1;min-height:2px;border-radius:3px 3px 0 0;position:relative}
+#anHist .bar span{position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-size:10px;color:#333}
+#anHist .lab{display:flex;gap:4px;font-size:10px;color:#666;margin-top:3px}
+#anHist .lab div{flex:1;text-align:center;overflow:hidden;white-space:nowrap}
+#anDiff td.num{font-variant-numeric:tabular-nums}
+#anDiff .pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px}
+#anDiff .pill.ez{background:#e3f4e6;color:#1c7c33}
+#anDiff .pill.md{background:#e2eefa;color:#1d5fbf}
+#anDiff .pill.hd{background:#fdeaea;color:#b3261e}
 </style>
 </head>
 <body>
@@ -232,6 +243,27 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
       <button id="gbExport" class="ghost">导出复核成绩 CSV</button>
     </div>
     <div id="gbBody"><div class="empty">还没有识别结果，先去②批量上传</div></div>
+  </div>
+
+  <div class="card">
+    <h2>⑦ 成绩分析 <span class="tag">基于工作台当前成绩（含人工复核与评分规则）</span></h2>
+    <div class="row">
+      <button id="anGo" class="ghost">生成分析</button>
+      <label class="f">学号段
+        <select id="anSeg" style="padding:4px 6px">
+          <option value="cls">按班级</option>
+          <option value="4">学号前4位</option>
+          <option value="6" selected>学号前6位</option>
+          <option value="8">学号前8位</option>
+        </select></label>
+      <span class="hint" id="anSum"></span>
+    </div>
+    <div class="grid2">
+      <div><h3 style="font-size:13px;margin:10px 0 6px;">成绩分布</h3><div id="anHist"><div class="empty">—</div></div></div>
+      <div><h3 style="font-size:13px;margin:10px 0 6px;">学号段统计</h3><div id="anSegTbl"><div class="empty">—</div></div></div>
+    </div>
+    <div><h3 style="font-size:13px;margin:10px 0 6px;">每题难度系数 <span class="hint">P = 全班该题平均得分 ÷ 该题满分 · P≥0.7 易 · 0.4~0.7 中 · &lt;0.4 难</span></h3>
+      <div id="anDiff"><div class="empty">—</div></div></div>
   </div>
 
   <!-- 只有管理员看得见（别人进来这段一直 display:none） -->
@@ -870,7 +902,7 @@ async function loadGradebook(){
   const r = await apijson('/api/gradebook?' + qid());
   if (!r.students){ $('#gbBody').innerHTML = '<div class="empty">还没有识别结果，先去②批量上传</div>'; return; }
   GB = {rows: r.students || [], qnos: r.qnos || [], key: r.key || {},
-        hasKey: !!r.hasKey, summary: r.summary || {}};
+        hasKey: !!r.hasKey, summary: r.summary || {}, rules: r.rules || {}};
   renderGradebook();
 }
 
@@ -1203,6 +1235,93 @@ $('#gbPrint').onclick = () => {
   $('#printRoot').innerHTML = GB.rows.map(sheetHtml).join('');
   window.print();
 };
+
+// ============================================================ ⑦ 成绩分析
+// 数据全部来自工作台 GB（含人工复核与评分规则），不另开接口：
+//   难度系数 P = 全班该题平均得分 ÷ 该题满分（规则感知：传统题满分 1，规则题取 points）
+//   分布直方图 = 复核分 effective 落桶；学号段 = 班级 或 考号前 N 位
+let AN = {rows: []};
+
+function anMaxQ(q){
+  const r = (GB.rules || {})[q] || (GB.rules || {})[String(q)];
+  return (r && r.points) ? +r.points : 1;
+}
+
+function runAnalysis(){
+  if (!GB.hasKey){ toast('请先在④保存标准答案'); return; }
+  const rows = (GB.rows || []).filter(s => s.total > 0);
+  if (!rows.length){ toast('还没有可分析的考生 —— 先去②批量上传'); return; }
+  AN.rows = rows;
+  const avg = rows.reduce((a, s) => a + s.effective, 0) / rows.length;
+  $('#anSum').textContent = `共 ${rows.length} 人 · 平均 ${fmtScore(avg)} / 满分 ${rows[0].total} · 得分率 ${Math.round(avg / rows[0].total * 100)}%`;
+  anRenderHist(rows);
+  anRenderSeg();
+  anRenderDiff(rows);
+}
+
+function anRenderHist(rows){
+  const total = rows[0].total || 1;
+  const nb = total >= 10 ? 10 : Math.max(1, Math.ceil(total));   // 满分小就 1 分一桶
+  const step = total / nb;
+  const cnt = Array(nb).fill(0);
+  for (const s of rows) cnt[Math.min(nb - 1, Math.floor(s.effective / step))]++;
+  const max = Math.max(...cnt, 1);
+  $('#anHist').innerHTML =
+    `<div class="bars">${cnt.map((c, i) =>
+      `<div class="bar" style="height:${Math.round(c / max * 120)}px" title="${fmtScore(i * step)}~${fmtScore((i + 1) * step)}：${c} 人"><span>${c || ''}</span></div>`).join('')}</div>
+     <div class="lab">${cnt.map((_, i) =>
+      `<div title="${fmtScore(i * step)}~${fmtScore((i + 1) * step)}">${fmtScore(i * step)}~${fmtScore((i + 1) * step)}</div>`).join('')}</div>`;
+}
+
+function anRenderSeg(){
+  const mode = $('#anSeg').value;
+  const rows = AN.rows;
+  const keyOf = s => mode === 'cls' ? (s.cls || '未填班级') : String(s.sid).slice(0, +mode || 6);
+  const g = {};
+  for (const s of rows){
+    const k = keyOf(s);
+    const b = (g[k] = g[k] || {n: 0, sum: 0, max: -Infinity, min: Infinity});
+    b.n++; b.sum += s.effective;
+    b.max = Math.max(b.max, s.effective); b.min = Math.min(b.min, s.effective);
+  }
+  const keys = Object.keys(g).sort();
+  const tot = rows[0].total || 1;
+  $('#anSegTbl').innerHTML = `<table><thead><tr>
+      <th>${mode === 'cls' ? '班级' : '学号段'}</th><th>人数</th><th>平均</th><th>最高</th><th>最低</th><th>得分率</th></tr></thead><tbody>
+    ${keys.map(k => { const t = g[k];
+      return `<tr><td>${esc(k)}</td><td>${t.n}</td><td>${fmtScore(t.sum / t.n)}</td>
+        <td>${fmtScore(t.max)}</td><td>${fmtScore(t.min)}</td><td>${Math.round(t.sum / t.n / tot * 100)}%</td></tr>`;
+    }).join('')}</tbody></table>`;
+}
+
+function anRenderDiff(rows){
+  const qnos = (GB.qnos || []).filter(q => (GB.key || {})[q]);
+  const rowsHtml = qnos.map(q => {
+    const mx = anMaxQ(q);
+    let sum = 0;
+    for (const s of rows) sum += ((s.per_q || {})[q] || {}).score || 0;
+    const P = rows.length ? sum / (mx * rows.length) : 0;
+    const tag = P >= 0.7 ? '<span class="pill ez">易</span>'
+              : P >= 0.4 ? '<span class="pill md">中</span>'
+                         : '<span class="pill hd">难</span>';
+    return `<tr><td><b>${q}</b></td><td>${esc((GB.key || {})[q])}</td><td class="num">${fmtScore(mx)}</td>
+      <td class="num"><b>${P.toFixed(2)}</b></td><td>${tag}</td></tr>`;
+  }).join('');
+  // 全班最难的 3 题提示
+  const hardest = qnos.map(q => {
+    const mx = anMaxQ(q);
+    let sum = 0;
+    for (const s of rows) sum += ((s.per_q || {})[q] || {}).score || 0;
+    return {q, P: rows.length ? sum / (mx * rows.length) : 0};
+  }).sort((a, b) => a.P - b.P).slice(0, 3).filter(x => x.P < 0.4)
+    .map(x => `第 ${x.q} 题（P=${x.P.toFixed(2)}）`).join('、');
+  $('#anDiff').innerHTML = `<table><thead><tr>
+      <th>题号</th><th>标准答案</th><th>满分</th><th>难度系数 P</th><th>判定</th></tr></thead>
+    <tbody>${rowsHtml}</tbody></table>
+    ${hardest ? `<div class="hint" style="margin-top:6px">重点讲评：${hardest}</div>` : ''}`;
+}
+$('#anGo').onclick = runAnalysis;
+$('#anSeg').onchange = () => { if (AN.rows.length) anRenderSeg(); };
 
 // ============================================================ 启动
 refreshSel();

@@ -6,6 +6,8 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added / 新增
+- **扫描服务：成绩分析**。新增「⑦ 成绩分析」卡片：**每题难度系数**（P = 全班该题平均得分 ÷ 该题满分，规则感知、自动标注易/中/难并列出重点讲评题）、**成绩分布直方图**（复核分落桶，纯内联 CSS 绘制）、**学号段统计**（按班级或考号前 4/6/8 位分组：人数/平均/最高/最低/得分率）。数据全部来自工作台（含人工复核与评分规则），不另开接口。
+  **Scanner: grade analysis** — a new card with per-question difficulty (P = class average ÷ full marks, rule-aware, tagged easy/medium/hard with focus suggestions), a score histogram (inline CSS, no external libs) and segment statistics (by class or SID prefix): count / avg / max / min / rate.
 - **扫描服务：自定义评分规则**。④汇总统计新增「评分规则」编辑器，逐题（或批量）设置计分方式：**单选自定义分值**（答错可倒扣、未答不罚）、**多选漏选得部分分**（如漏选得一半，错选 0 或倒扣）、**按选对个数阶梯给分**（七选三典型 `对1个1分、对2个2分、对3个4分`）。规则随考试存盘（库结构 v2 加 `exams.rules`），工作台 / 复核 / 成绩导出全部联动重算；没配规则的题保持传统「答对 1 分」，老考试行为不变。多选题学生的实际涂选从识别时的逐选项墨迹推导，无需重新识别。
   **Scanner: custom scoring rules** — a per-question rule editor (with batch apply) supporting custom-points single choice (optional wrong-answer penalty), multi-choice partial credit (e.g. half points for missing selections) and ladder scoring by number of correct picks (e.g. 七选三 1/2/4). Rules persist with the exam (schema v2 `exams.rules`) and re-drive the gradebook, review flow and CSV export; questions without a rule keep the legacy 1-point behaviour. A student's multi-bubble selections are derived from per-option ink recorded at recognition time.
 - **扫描服务：成绩单打印（一个学生一页）**。阅卷工作台一键「打印成绩单」：每位学生一页 A4（得分 / 原始分 / 逐题作答与判定 / 老师备注 / 师生签名栏），走浏览器打印即可存成 PDF，服务端零新依赖。

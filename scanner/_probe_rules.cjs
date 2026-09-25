@@ -81,6 +81,28 @@ const waitFor = async (page, fn, ms = 9000, step = 250) => {
   // 打印预览不能真开 —— 校验 printRoot 内容 + print CSS 存在即可
   const hasPrintCss = await page.evaluate(() => [...document.styleSheets].some(ss => { try { return [...ss.cssRules].some(r => r.media && /print/.test(r.media.mediaText)); } catch(_) { return false; } }));
   ok(hasPrintCss, '@media print 样式已注入');
+
+  // ---- ⑦ 成绩分析 ----
+  await page.click('#anGo');
+  await page.waitForTimeout(300);
+  const anDiffRows = await page.evaluate(() => document.querySelectorAll('#anDiff tbody tr').length);
+  ok(anDiffRows === 19, '难度表 19 行（每道有答案的题）', 'rows=' + anDiffRows);
+  const anBars = await page.evaluate(() => document.querySelectorAll('#anHist .bar').length);
+  ok(anBars === 10, '直方图 10 桶（满分 19 ≥ 10）', 'bars=' + anBars);
+  const anHistTotal = await page.evaluate(() => [...document.querySelectorAll('#anHist .bar span')].reduce((a, s) => a + (+s.textContent || 0), 0));
+  ok(anHistTotal === 4, '直方图各桶人数合计 = 4 人', 'sum=' + anHistTotal);
+  const segRows = await page.evaluate(() => [...document.querySelectorAll('#anSegTbl tbody tr')].map(tr => tr.textContent));
+  ok(segRows.length >= 1 && segRows[0].includes('202601') && segRows[0].includes('4'), '学号段(前6位)统计出 202601 段 4 人', segRows[0]);
+  // 切到按班级
+  await page.selectOption('#anSeg', 'cls');
+  await page.waitForTimeout(200);
+  const clsRows = await page.evaluate(() => [...document.querySelectorAll('#anSegTbl tbody tr')].map(tr => tr.textContent));
+  ok(clsRows.some(r => r.includes('高三(12)班')), '按班级统计出高三(12)班', clsRows[0]);
+  // 难度列有 P 值与判定
+  const hasP = await page.evaluate(() => { const tds = [...document.querySelectorAll('#anDiff tbody tr')];
+    return tds.length > 0 && tds.every(tr => /\d\.\d\d/.test(tr.textContent) && /[易中难]/.test(tr.textContent)); });
+  ok(!!hasP, '每题都有 P 值与易/中/难判定');
+  await page.screenshot({ path: path.join(OUT, 'ui_analysis.png'), fullPage: true });
   console.log('\nPAGEERRORS:', errs.length ? errs : 'none');
   for (const e of errs) fails++;
   await browser.close();

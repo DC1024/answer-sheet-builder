@@ -748,6 +748,7 @@ def gradebook():
     review = sum(1 for r in rows if r['grading'].get('review'))
     avg = (sum(r['effective'] for r in rows) / len(rows)) if rows else 0
     return jsonify({'exam': _exam_view(exam), 'qnos': qnos, 'key': key, 'hasKey': bool(key),
+                    'rules': rules,
                     'students': rows,
                     'summary': {'count': len(rows), 'graded': graded,
                                 'review': review, 'avg': round(avg, 1)}})

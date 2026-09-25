@@ -543,6 +543,7 @@ eq(set(j.get('rules') or {}), {'1', '2'}, '规则读回来是刚存的 2 条')
 eq((j['rules'].get('1') or {}).get('points'), 2.0, '第 1 题分值 2 落库')
 eq((j['rules'].get('2') or {}).get('type'), 'multi_partial', '第 2 题规则类型落库')
 gj = c.get('/api/gradebook').get_json() or {}
+ok('rules' in gj, 'gradebook 返回 rules 字段（成绩分析要用）')
 row = next((x for x in gj.get('students') or [] if x['sid'] == '2026010234'), {})
 eq(row.get('auto'), 21, '工作台 auto 按规则计分：2+2+17×1=21')
 # POST 是整体替换：非法类型被丢弃，没提到的旧规则也一并消失
