@@ -147,12 +147,22 @@ def test_e2e_handwrite():
                   for i in sorted(range(1, 11)))
     want = ''.join(ans[str(i)] for i in range(1, 11))
     n_ok = sum(1 for i in range(1, 11) if i in wres and wres[i].get('answer') == ans[str(i)])
-    # 给出答案的题必须全对（0 自信错）；multi/doubt/空框允许（进复核，不硬猜）。
     n_given = sum(1 for i in range(1, 11) if i in wres and wres[i].get('answer'))
-    wrong = n_given - n_ok
+    # 铁律：可以存疑，不可以「自信地」给错答案。
+    # 与 A/B 层口径一致 —— conf >= DOUBT_CONF（flag=ok/faint）才算「自信给出」，
+    # 这部分必须全对；doubt 是诚实交复核，它的 answer 只是给老师的**建议值**，
+    # 不能与自信答案同等要求（否则等于逼分类器在没把握时硬猜，正好违反铁律）。
+    n_conf = sum(1 for i in range(1, 11)
+                 if i in wres and wres[i].get('answer') and wres[i].get('flag') in ('ok', 'faint'))
+    n_conf_ok = sum(1 for i in range(1, 11)
+                    if i in wres and wres[i].get('answer') and wres[i].get('flag') in ('ok', 'faint')
+                    and wres[i]['answer'] == ans[str(i)])
+    wrong = n_conf - n_conf_ok
+    n_doubt = sum(1 for i in range(1, 11)
+                  if i in wres and wres[i].get('answer') and wres[i].get('flag') == 'doubt')
     print(f'[C] 手写整卷：识别 "{got}" / 真值 "{want}" → 答 {n_ok}/10，'
-          f'给出答案 {n_given} 题，其中自信错 {wrong}')
-    print(f'     保守进复核 {10 - n_given} 题（multi/空框/低置信，可人工确认）')
+          f'给出答案 {n_given} 题（自信 {n_conf} / 存疑 {n_doubt}），其中自信错 {wrong}')
+    print(f'     保守进复核 {10 - n_given} 题（multi/空框，可人工确认）')
     assert wrong == 0, f'手写整卷出现自信错：{wrong} 题（宁可复核，不可硬猜）'
     assert n_ok >= 3, f'手写整卷识别过少：{n_ok}/10（合成字体变形不可控，但链路应工作）'
 

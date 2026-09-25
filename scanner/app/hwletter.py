@@ -23,13 +23,24 @@ HOLE_MIN = 0.03
 DOUBT_CONF = 1.0
 
 
-def extract_glyph(thr_box, min_area_ratio=0.02):
+def extract_glyph(thr_box, min_area_ratio=0.02, frame_th=0.82):
     """从作答框的二值图（墨=255）提取字形紧致掩码。
 
     返回 (glyph 48x48 uint8 {0,255}, meta) 或 (None, meta)。
-    meta: {'blobs': 连通域数, 'area': 墨面积}
+    meta: {'blobs': 保留的连通域数, 'area': 主字形面积,
+           'frame_drop': 被判为框线剔除的段数, 'raw_blobs': 剔除前的连通域数}
     噪声剔除：面积 < 框面积 min_area_ratio 的连通域忽略；
     断笔合并：在 3x3 膨胀图上找连通域，回原掩码取像素。
+
+    作答框边框：模板的 write 框常常印有可见黑框。二值化后框线是一个
+    **外接矩形几乎占满整个采样框**的连通域（宽/高都 ≥ frame_th），
+    它不是手写字母，必须在提字形前剔除 —— 否则框 + 字母两个大块会被
+    当成 multi（=“写了两字母”），或框线特征把分类带偏（实测 1/3 判 multi、
+    答案偏 C 就是这个原因）。
+
+    真实卷里更常见的是方框**断成多段**（左竖/右竖/上下横/四角），每段
+    都不满足 frame_th → 由 _is_frame_piece 按「贴边+细长 / 贴边角块」剔除。
+    剔除只作用于非主连通域，写得满框的大字不会被误删。
     """
     h, w = thr_box.shape
     box_area = float(h * w)
@@ -41,31 +52,83 @@ def extract_glyph(thr_box, min_area_ratio=0.02):
 
     dil = cv2.dilate(thr_box, np.ones((3, 3), np.uint8))
     n, _, stats, _ = cv2.connectedComponentsWithStats(dil, connectivity=8)
-    comps = []                                       # (area, x, y, bw, bh)
+
+    def _is_frame(i):
+        """整个外接矩形几乎铺满采样框 → 是纸面方框的边框，不是手写字母。"""
+        bw = stats[i, cv2.CC_STAT_WIDTH]
+        bh = stats[i, cv2.CC_STAT_HEIGHT]
+        return bw > frame_th * w and bh > frame_th * h
+
+    def _is_frame_piece(i):
+        """框线**碎片**：纸面方框被断笔/二值化切成多段后，每一段单独的形态。
+
+        完整方框（_is_frame）只占少数 —— 实测真实卷里方框大多断成：
+          左竖线 / 右竖线 / 上横线 / 下横线 / 四角拐角
+        每一段的外接矩形都很小（bw/w 只有 0.05~0.09），**不满足 frame_th**
+        判据，于是被当成手写字的墨留下来：主字形旁边多出一块面积不小的
+        “第二大团墨” → 直接触发 multi（Q5/Q10 实测 28/30 卷判 multi 就是它）。
+
+        判据（贴边 + 细长，或贴边的角块）：手写字母写在框中央，不会
+        恰好细长地贴在采样框边缘，也不会孤立地卡在角落而不与主字相连。
+        """
+        bw = stats[i, cv2.CC_STAT_WIDTH]
+        bh = stats[i, cv2.CC_STAT_HEIGHT]
+        x, y = stats[i, 0], stats[i, 1]
+        thin_x = bw < 0.15 * w                       # 竖向细条（框的竖边）
+        thin_y = bh < 0.15 * h                       # 横向细条（框的横边）
+        touch_l, touch_r = x <= 1, (x + bw) >= w - 1
+        touch_t, touch_b = y <= 1, (y + bh) >= h - 1
+        if thin_x and (touch_l or touch_r):
+            return True
+        if thin_y and (touch_t or touch_b):
+            return True
+        # 拐角：同时贴住两条边（横竖边在角上断开了）
+        if (touch_l or touch_r) and (touch_t or touch_b):
+            return True
+        return False
+
+    # 先收集所有够大的连通域，按面积降序 —— 主字形 = 最大者，永远保留，
+    # 框线判据只作用于其余碎片（否则写得满框的大字会被误删）。
+    comps = []                                       # (area, idx, x, y, bw, bh)
     for i in range(1, n):
         a = stats[i, cv2.CC_STAT_AREA]
         if a < box_area * min_area_ratio:
             continue
-        comps.append((a, stats[i, 0], stats[i, 1], stats[i, 2], stats[i, 3]))
+        comps.append((a, i, stats[i, 0], stats[i, 1], stats[i, 2], stats[i, 3]))
     if not comps:
         return None, {'blobs': 0, 'area': ink}
     comps.sort(key=lambda c: -c[0])
-    main = comps[0]
-    meta = {'blobs': len(comps), 'area': int(main[0])}
 
-    # 次大连通域仍占主体 1/4 以上 → 大概率写了两个字母
-    if len(comps) > 1 and comps[1][0] > main[0] * 0.25:
-        return None, dict(meta, multi=True)
-
-    # 主字形 + 与主域**有墨重叠**或面积可观的连通域（断笔 / 点类）一起收进掩码。
-    # 只判「包围盒相交」会混入邻字杂墨（采样框沾到相邻字母的边缘），必须用墨重叠。
-    mx0, my0, mx1, my1 = main[1], main[2], main[1] + main[3], main[2] + main[4]
-    mask = np.zeros_like(thr_box)
-    for i in range(1, n):
-        a = stats[i, cv2.CC_STAT_AREA]
-        if a < box_area * min_area_ratio:
+    keep = [comps[0]]                                # 主字形
+    frame_drop = 0
+    for c in comps[1:]:
+        i = c[1]
+        if _is_frame(i) or _is_frame_piece(i):
+            frame_drop += 1
             continue
-        x, y, bw, bh = stats[i, 0], stats[i, 1], stats[i, 2], stats[i, 3]
+        keep.append(c)
+    main = keep[0]
+    meta = {'blobs': len(keep), 'area': int(main[0]),
+            'frame_drop': frame_drop, 'raw_blobs': len(comps)}
+
+    # 次大连通域仍占主体 1/4 以上 → 可能写了两个字母。
+    # 但真实手写里**同一个字母常被断笔切成上下两段**（横杠、收笔与主体分离），
+    # 形态上也是「两大团墨」，却不是两个字 —— 直接按面积判 multi 会冤枉它们
+    # （实测 48 个残留 multi 多数是这种）。区分方法看**空间关系**：
+    #   两个字母并排写 → 次大域在主体左/右侧，包围盒基本不重叠
+    #   同一字母断笔   → 次大域在主体上/下方且大量落在主体包围盒内
+    mx0, my0, mx1, my1 = main[2], main[3], main[2] + main[4], main[3] + main[5]
+    if len(keep) > 1 and keep[1][0] > main[0] * 0.25:
+        c = keep[1]
+        ix0, iy0 = max(c[2], mx0), max(c[3], my0)
+        ix1, iy1 = min(c[2] + c[4], mx1), min(c[3] + c[5], my1)
+        inter = max(0, ix1 - ix0) * max(0, iy1 - iy0)
+        # 包围盒重叠不足一半 → 空间上确实是分开的第二团 → 才判 multi
+        if inter < 0.5 * max(1, c[4] * c[5]):
+            return None, dict(meta, multi=True)
+    mask = np.zeros_like(thr_box)
+    for c in keep:
+        a, i, x, y, bw, bh = c
         bbox = thr_box[y:y + bh, x:x + bw]
         if bbox.size == 0:
             continue
@@ -153,15 +216,21 @@ def _features(g):
 
     f['top_w'] = round(_band_w(ys0, ys0 + band), 2)
     f['bot_w'] = round(_band_w(ys1 - band + 1, ys1 + 1), 2)
-    # 顶部 30% 行带里，左右哪侧有墨（b 的左竖 / d 的右竖 / A 的尖顶居中）
-    tband = g[ys0:ys0 + max(2, int(gh * 0.30))]
-    cols = np.nonzero(tband.any(axis=0))[0]
-    if len(cols):
+    def _side_ink(y_from, y_to):
+        """某行带里左半 / 右半各有多少列有墨 —— 用来判断「环是否闭合」。"""
+        sl = g[y_from:y_to]
+        cols = np.nonzero(sl.any(axis=0))[0]
+        if not len(cols):
+            return 0, 0
         mid = CANVAS / 2
-        f['top_left'] = int((cols < mid * 0.8).sum())
-        f['top_right'] = int((cols > mid * 1.2).sum())
-    else:
-        f['top_left'] = f['top_right'] = 0
+        return int((cols < mid * 0.8).sum()), int((cols > mid * 1.2).sum())
+
+    f['top_left'], f['top_right'] = _side_ink(ys0, ys0 + max(2, int(gh * 0.30)))
+    # 中部行带（40%~60%）的左右墨 —— 零洞时区分「C 的右开口」与「A/D 的环」的关键：
+    #   C 中部只有左侧有墨（右侧敞开）→ mid_right≈0
+    #   D 中部左右都有墨（半圆环，只是笔画没收拢没检出洞）→ mid_right 大
+    #   A 的两腿 / B 的双环同理都有右侧墨
+    f['mid_left'], f['mid_right'] = _side_ink(ys0 + int(gh * 0.40), ys0 + max(int(gh * 0.60), int(gh * 0.40) + 1))
     return f
 
 
@@ -177,10 +246,37 @@ def classify(glyph):
 
     # --- 洞数是第一判据 ---
     if f['nh'] == 0:
-        s['C'] += 1.6
-        s['A'] -= 0.8                               # 没封口的 A 会被 C 抢走 → 洞很关键
-        s['B'] -= 0.6
-        s['D'] -= 0.6
+        # 真实手写里 A/B/D 的洞经常**收不拢口**（起收笔有缝）→ nh=0，
+        # 早期版本在这里一律 s['C'] += 1.6，实测 153 个零洞样本全判成 C，
+        # 其中 98 个真值是 A/B/D —— 这是准确率最大的杀手。
+        # 洞没了不代表形状没了：用「中部行带左右是否都有墨」把
+        # **右开口的 C** 和 **左右合围的环（A/B/D）** 先劈开，再看形态定字母。
+        #   C  中部只有左侧有墨（向右敞开）  → mid_right≈0
+        #   D  中部左右都有墨且右侧更重（半圆弧）→ md = mr-ml 明显为正
+        #   A  两腿张开 → 底宽明显大于顶宽
+        #   B  左右都有墨且较均衡（双环）
+        mr, ml = f['mid_right'], f['mid_left']
+        md = mr - ml
+        dw = f['bot_w'] - f['top_w']
+        if mr <= 0:                                  # 右侧敞开 → 真的是 C 的开口
+            s['C'] += 1.8
+            s['A'] -= 0.5
+            s['B'] -= 0.3
+            s['D'] -= 0.8
+        elif md < -4:                                # 左重右轻 → C 的左弧
+            s['C'] += 1.2
+            s['D'] -= 0.5
+        elif dw > 0.25:                              # 底宽 >> 顶宽 → A 的两腿
+            s['A'] += 1.5
+            s['C'] -= 1.0
+        elif md > 2.0:                               # 右弧重 → D
+            s['D'] += 1.5
+            s['C'] -= 1.0
+        else:                                        # 左右合围且均衡 → 环形，绝不是 C
+            s['B'] += 0.8
+            s['C'] -= 1.2
+            s['A'] += 0.2
+            s['D'] += 0.2
         # C 是瘦长开放形；若是矮胖方形（A/B/D 破坏到洞丢失），C 不应太自信
         if f['aspect'] > 0.85:
             s['C'] -= 0.4
