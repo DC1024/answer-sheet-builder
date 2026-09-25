@@ -94,6 +94,14 @@ All notable changes to this project are documented here.
   account/role management and an admin-only account card.
 
 ### Fixed / 修复
+- **e2e 对着持久库跑，断言赌了「库是干净的」**。考试持久化后，上一次 e2e 运行在 G 节留下的
+  人工补录（override）会留在库里；下一次运行的 E 节（批量上传 + 内嵌名单）会被这份残留补录影响，
+  「名单外的考号 → matched=False」误报红。现在 e2e 每次运行先**新建一个干净考试**再传模板，
+  与残留状态彻底隔离（`test_service.py` 新增 §N 用全新考试锁「内嵌名单必须真正覆盖匹配」）。
+  **The e2e suite no longer bets on a clean database.** Overrides and rosters persist in SQLite now, so
+  a leftover manual fill-in from run N broke run N+1's out-of-roster assertions. The e2e now starts by
+  creating a fresh exam, and `test_service.py` §N pins the "embedded roster overrides a stale one" rule
+  on a brand-new exam.
 - **「全班 0 分」的持久化陷阱**。判分按题号（`int`）查答案，但 JSON 只认字符串键——把整个考生字典当 blob 存
   再读回，键没归一化的话判分全查不到。持久化层统一在读写时做「题号键 ↔ 字符串」往返，并在 `test_store.py` /
   `test_service.py` 钉住「存进去再读回来分还是对的」这条不变量。

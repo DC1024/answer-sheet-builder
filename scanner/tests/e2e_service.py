@@ -139,6 +139,11 @@ def main():
     st, _ = req('GET', '/', raw=True)
     check(st == 200, 'GET / 页面可达（已登录）', f'HTTP {st}')
 
+    # 0.5 重置：每次运行新建一个干净考试并切过去，避开上次运行残留的名单/补录污染。
+    # （考试持久化后，旧的 补录/名单 会留在库里，直接复用同一个考试会让断言误报。）
+    st, j = req('POST', '/api/exams', json_body={'name': 'e2e-干净考试'})
+    check(st == 200 and (j or {}).get('ok'), '新建干净考试（隔离上次残留）', str(j)[:120])
+
     print('\n=== 1. 上传阅卷模板 ===')
     tpl_bytes = open(os.path.join(FIX, 'template.json'), 'rb').read()
     st, j = req('POST', '/api/template', files=[('file', 'template.json', tpl_bytes, 'application/json')])
