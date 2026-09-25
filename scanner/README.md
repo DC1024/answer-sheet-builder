@@ -62,6 +62,9 @@ python -m app.server          # http://127.0.0.1:8081
 python tests/test_omr.py        # 识别核心：定位 / 采样 / 判定 / 统计判分
 python tests/test_batch.py      # 批量逻辑：路径解析 / zip 解包 / 归组 / 名单匹配 / 页序
 python tests/test_service.py    # 服务层：用 Flask 测试客户端直接打接口，不用起服务
+python tests/test_scoring.py    # 评分规则引擎：单选分值 / 多选漏选 / 七选三阶梯
+python tests/test_store.py      # 持久化层：SQLite 建库 / 迁移 / 读回
+python tests/test_real30.py     # 真实扫描件回归：30 张实际答题卡 × 逆向模板，300 判定点对真值
 
 # 服务级集成：需要先把服务跑起来
 docker compose up -d            # 或 python -m app.server
@@ -71,6 +74,10 @@ BASE=http://192.168.1.10:8081 python tests/e2e_service.py
 
 `test_omr.py` 用 `tests/fixtures/` 里 6 份**由真实制卡端渲染出来**的答题卡，跑识别率、
 存疑标注与汇总判分；手机拍照图是运行时现场合成的（透视 + 明暗 + 模糊 + 噪声 + JPEG）。
+`test_real30.py` 是**真实扫描件回归**：30 张实际生产的答题卡（`fixtures/real30/`）配逆向生成的
+阅卷模板，300 个判定点必须与真值 `expected.json` 全部一致 —— 模板由
+`tools/make_template_from_real.py` 从扫描件自动测得（四角定位点 → 矫正 → 选项框聚类），
+换一批新版式的扫描件时改跑它即可重新出模板。
 `test_service.py` 把 zip、名单、补录、越界页序这些接线问题在**部署之前**就拦住。
 `e2e_service.py` 则对着真容器走一遍完整业务流（含批量上传），容器里是 opencv 4.9。
 
@@ -486,10 +493,13 @@ answer-sheet-builder/
     ├── static/login.html  # 登录 / 首次启动创建管理员页（与 index.html 同目录）
     ├── tests/
     │   ├── fixtures/      # 已提交的测试素材：模板 + 6 份答题卡 + 3 份考号边界素材 + 预期答案
+    │   │   └── real30/    # 30 张真实扫描件 + 逆向生成的 template.json + 真值 expected.json
     │   ├── _fixtures.py   # 素材路径与手机拍照模拟（共用）
     │   ├── test_omr.py    # 离线自检：识别率 / 卷面考号 / 存疑标注 / 统计判分
     │   ├── test_batch.py  # 离线自检：路径解析 / 解包 / 归组 / 卷面考号校正 / 名单 / 页序
     │   ├── test_service.py# 离线自检：Flask 测试客户端直打接口
+    │   ├── test_scoring.py# 离线自检：评分规则引擎
+    │   ├── test_real30.py # 离线自检：真实扫描件全量回归（30 张 × 10 题）
     │   ├── e2e_service.py # 服务级集成：对跑起来的服务走完整业务流
     │   └── diag1.py       # 单图诊断：打印矫正坐标与采样值，调参用
     ├── Dockerfile

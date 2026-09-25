@@ -6,6 +6,8 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added / 新增
+- **扫描服务：真实扫描件回归基准（real30）**。30 张真实答题卡扫描件入库（`tests/fixtures/real30/`），配套工具 `tools/make_template_from_real.py` 从扫描件**逆向生成阅卷模板**（自动找四角定位点 → 透视矫正 → 聚类测量 40 个选项框坐标 → 输出 `asb-omr/2` JSON），再用识别核心全量回验：30 张 × 10 题 = 300 个判定点全部与真值一致、零存疑。`tests/test_real30.py` 把这条基准钉死 —— 此后识别链路（矫正 / 采样 / 判定阈值）的任何改动都要过真实笔迹这一关，不再只靠合成图自证。
+  **Scanner: real-scan regression baseline (real30)** — 30 real scanned answer sheets with a reverse-engineered OMR template (`tools/make_template_from_real.py`: corner marks → warp → bubble-grid clustering → `asb-omr/2` JSON). The full recognition chain scores 300/300 against ground truth with zero flags; `tests/test_real30.py` locks it in so any change to warp/sampling/decide must still pass real-ink data, not just synthetic fixtures.
 - **扫描服务：成绩分析**。新增「⑦ 成绩分析」卡片：**每题难度系数**（P = 全班该题平均得分 ÷ 该题满分，规则感知、自动标注易/中/难并列出重点讲评题）、**成绩分布直方图**（复核分落桶，纯内联 CSS 绘制）、**学号段统计**（按班级或考号前 4/6/8 位分组：人数/平均/最高/最低/得分率）。数据全部来自工作台（含人工复核与评分规则），不另开接口。
   **Scanner: grade analysis** — a new card with per-question difficulty (P = class average ÷ full marks, rule-aware, tagged easy/medium/hard with focus suggestions), a score histogram (inline CSS, no external libs) and segment statistics (by class or SID prefix): count / avg / max / min / rate.
 - **扫描服务：自定义评分规则**。④汇总统计新增「评分规则」编辑器，逐题（或批量）设置计分方式：**单选自定义分值**（答错可倒扣、未答不罚）、**多选漏选得部分分**（如漏选得一半，错选 0 或倒扣）、**按选对个数阶梯给分**（七选三典型 `对1个1分、对2个2分、对3个4分`）。规则随考试存盘（库结构 v2 加 `exams.rules`），工作台 / 复核 / 成绩导出全部联动重算；没配规则的题保持传统「答对 1 分」，老考试行为不变。多选题学生的实际涂选从识别时的逐选项墨迹推导，无需重新识别。
