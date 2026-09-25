@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  简体中文 &nbsp;·&nbsp; <a href="README_EN.md">English</a> &nbsp;·&nbsp; <a href="CHANGELOG.md">更新日志</a> &nbsp;·&nbsp; <a href="app.html">在线试用</a>
+  简体中文 &nbsp;·&nbsp; <a href="README_EN.md">English</a> &nbsp;·&nbsp; <a href="CHANGELOG.md">更新日志</a> &nbsp;·&nbsp; <a href="https://dc1024.github.io/answer-sheet-builder/app.html">在线试用</a>
 </p>
 
 ---

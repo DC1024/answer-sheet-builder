@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">简体中文</a> &nbsp;·&nbsp; English &nbsp;·&nbsp; <a href="CHANGELOG.md">Changelog</a> &nbsp;·&nbsp; <a href="app.html">Live Demo</a>
+  <a href="README.md">简体中文</a> &nbsp;·&nbsp; English &nbsp;·&nbsp; <a href="CHANGELOG.md">Changelog</a> &nbsp;·&nbsp; <a href="https://dc1024.github.io/answer-sheet-builder/app.html">Live Demo</a>
 </p>
 
 ---
