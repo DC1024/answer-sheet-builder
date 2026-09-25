@@ -296,7 +296,10 @@ body.rz-drag{user-select:none;-webkit-user-select:none;cursor:ns-resize;}
   .stage{padding:0;}
   .sheet{box-shadow:none;width:auto;padding:0;}
   /* 每面固定尺寸卡片 => 每页打印一张，自动双面顺序（item 2） */
-  .page{box-shadow:none;margin:0;break-after:page;page-break-after:always;}
+  /* overflow:hidden 兜住 mm→px 舍入产生的亚像素溢出（否则末尾会多吐一张空白页） */
+  .page{box-shadow:none;margin:0;break-after:page;page-break-after:always;overflow:hidden;}
+  /* 最后一张卡片不再强制分页 —— 「只有正面有内容」时 PDF 必须只有一页 */
+  .page:last-child{break-after:auto;page-break-after:auto;}
   .blk,.ans-box,.custom-box,.info-box{break-inside:avoid;}
   /* 拖动把手只是编辑辅助，绝不能出现在打印 / PDF 上 */
   .rz-grip{display:none !important;}

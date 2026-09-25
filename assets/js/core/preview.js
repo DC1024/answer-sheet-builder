@@ -114,6 +114,15 @@ export function renderPreview(el){
   // 3) 输出
   el.innerHTML = '';
   pages.forEach(p => el.appendChild(p));
+  // 3.2) 同步 @page 纸张尺寸 —— 打印 / 导出 PDF 必须按当前纸张（A4/A3、横竖版）出页，
+  //      否则 Chrome 按默认纸型排版：轻则缩放错位，重则末尾多吐一张空白页。
+  let ps = document.getElementById('printPageSize');
+  if (!ps){
+    ps = document.createElement('style');
+    ps.id = 'printPageSize';
+    document.head.appendChild(ps);
+  }
+  ps.textContent = `@media print{ @page{ size:${pw}mm ${ph}mm; margin:0; } }`;
   // 3.5) 解答题作答区：加「拖动调高度」把手（绝对定位，不参与排版，故不影响分页测量）
   el.querySelectorAll('.ans-box .ab[data-blk]').forEach(ab => {
     const grip = document.createElement('div');
