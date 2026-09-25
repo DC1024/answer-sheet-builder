@@ -75,6 +75,16 @@ export function exportOmrTemplate(sheet){
     p.querySelectorAll('.scq[data-q]').forEach(q => {
       const no = parseInt(q.dataset.q, 10);
       if (!no) return;
+      // 手写作答框（A-D 识别）：导出 write 坐标，扫描端走 decode_write 结构分类
+      if (q.dataset.mode === 'writebox'){
+        const w = q.querySelector('.wbox[data-w]');
+        if (!w) return;
+        const c = centerMM(w, pr, mmpp);
+        const qc = centerMM(q, pr, mmpp);
+        questions.push({ no, x: qc.x, y: qc.y,
+          write: { x: c.x, y: c.y, w: +Math.max(3, c.w).toFixed(2), h: +Math.max(3, c.h).toFixed(2) } });
+        return;
+      }
       const opts = [...q.querySelectorAll('.bub[data-opt]')].map(b => {
         const c = centerMM(b, pr, mmpp);
         return {

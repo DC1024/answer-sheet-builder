@@ -32,7 +32,12 @@ function optLabels(n){
 
 // 单题 HTML：题号与选项分离 —— .scn 固定不换行，.opts 内每个选项是原子块（不会跨行拆开），
 // 放不下时整块下移，避免「题号孤零零占一行」或「选项被劈成两半」。
+// mode: bubble=填涂中括号 / handwrite=横线 / writebox=方框手写作答（A-D 手写识别用）
 function qHtml(no, letters, mode){
+  if (mode === 'writebox'){
+    // 学生把 A/B/C/D 写进方框；data-mode 供导出模板定位 wbox 坐标 → write 字段
+    return `<div class="scq wb" data-q="${no}" data-mode="writebox"><span class="scn">${no}.</span><span class="wbox" data-w="${no}"></span></div>`;
+  }
   // data-q / data-opt 供「导出阅卷模板」定位每个填涂圈（不影响渲染外观）
   if (mode !== 'bubble') return `<div class="scq hw" data-q="${no}" data-mode="hw"><span class="scn">${no}.</span><span class="hw-line"></span></div>`;
   const cells = letters.map(l => `<span class="bub" data-opt="${esc(l)}"><span class="bracket">${l}</span></span>`).join('');
@@ -72,13 +77,14 @@ export default {
           <select data-k="mode">
             <option value="bubble">填涂（中括号）</option>
             <option value="handwrite">手写（横线）</option>
+            <option value="writebox">手写（方框，A-D 识别）</option>
           </select>
         </label>
         <label>行间距(mm)
           <input type="number" min="0.5" max="30" step="0.5" data-k="hwGap" value="${config.hwGap ?? 1}">
         </label>
       </div>
-      <p class="hint">「行间距」控制每题之间的垂直距离（手写样式下尤其需要留出书写空间）。「每行题数」为上限：空间不足时会自动减少列数，保证每道题的题号与全部选项都排在同一行内。选项超过 26 个用 AA、AB… 续排；选项多到一行放不下时该题独占一栏，按行排满后换行，不会超出纸张。</p>
+      <p class="hint">「行间距」控制每题之间的垂直距离（手写样式下尤其需要留出书写空间）。「每行题数」为上限：空间不足时会自动减少列数，保证每道题的题号与全部选项都排在同一行内。选项超过 26 个用 AA、AB… 续排；选项多到一行放不下时该题独占一栏，按行排满后换行，不会超出纸张。**「手写（方框，A-D 识别）」**样式让学生在方框里写 A/B/C/D，导出阅卷模板后扫描端会自动做结构识别（可离线、不依赖模型）。</p>
     `;
     container.querySelector('[data-k="mode"]').value = config.mode;
     container.querySelectorAll('[data-k]').forEach(el => {

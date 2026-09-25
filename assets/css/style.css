@@ -194,6 +194,8 @@ button:disabled:hover{background:#f3f5f8;}
 .scq .bub{display:inline-flex;align-items:center;gap:2px;}
 .scq .bracket{display:inline-flex;align-items:center;justify-content:center;min-width:1.35em;height:1.35em;padding:0 0.1em;font-size:0.9em;border:1.5px solid #333;}
 .scq.hw .hw-line{flex:1;border-bottom:1.5px solid var(--line);min-height:14px;min-width:40px;}
+/* 手写作答框（A-D 识别）：学生把字母写进方框，导出模板后扫描端做结构分类 */
+.scq.wb .wbox{width:26px;height:32px;border:1.8px solid #333;flex:0 0 auto;box-sizing:border-box;background:#fff;}
 
 /* 填空 */
 /* line-height 也跟随「行间距」--> 修复：小题内换行后（第一行与第二行）行距不生效 */
