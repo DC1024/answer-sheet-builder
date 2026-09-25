@@ -336,8 +336,8 @@ const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 let toastT = null;
 function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('on'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('on'),2200); }
-const flagText = {ok:'已选', multi:'多选/难分', faint:'浅涂', blank:'未填'};
-const flagCls = {ok:'ok', multi:'warn', faint:'warn', blank:'err'};
+const flagText = {ok:'已选', multi:'多选/难分', faint:'浅涂', blank:'未填', doubt:'存疑'};
+const flagCls = {ok:'ok', multi:'warn', faint:'warn', blank:'err', doubt:'warn'};
 // 考号是从哪儿来的 —— 这决定了老师该不该相信这份卷子的归属
 const sidSrcText = {
   'file': '考号来自文件名', 'file-stem': '考号来自文件名（没解析出号码）',

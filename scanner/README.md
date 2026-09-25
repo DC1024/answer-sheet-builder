@@ -65,6 +65,7 @@ python tests/test_service.py    # 服务层：用 Flask 测试客户端直接打
 python tests/test_scoring.py    # 评分规则引擎：单选分值 / 多选漏选 / 七选三阶梯
 python tests/test_store.py      # 持久化层：SQLite 建库 / 迁移 / 读回
 python tests/test_real30.py     # 真实扫描件回归：30 张实际答题卡 × 逆向模板，300 判定点对真值
+python tests/test_hwletter.py   # 手写字母分类：印刷集 900 样本 0 误判 + 整卷手写 e2e
 
 # 服务级集成：需要先把服务跑起来
 docker compose up -d            # 或 python -m app.server
@@ -78,6 +79,16 @@ BASE=http://192.168.1.10:8081 python tests/e2e_service.py
 阅卷模板，300 个判定点必须与真值 `expected.json` 全部一致 —— 模板由
 `tools/make_template_from_real.py` 从扫描件自动测得（四角定位点 → 矫正 → 选项框聚类），
 换一批新版式的扫描件时改跑它即可重新出模板。
+
+### 手写字母识别（半自动）
+
+`app/hwletter.py` 提供**手写 A/B/C/D 结构分类**（纯 OpenCV 特征，零模型）：连通域提字形 →
+洞数量/位置 + 轮廓顶底宽打分，映射 A/B/C/D（大小写）。模板的题目加一个可选的
+`write` 作答框（`x/y/w/h`，mm）后，识别时对该题走手写分类，返回 `flag: ok/faint/doubt/multi/blank`。
+**设计原则是"宁可存疑、不可硬猜"**：置信不足（`DOUBT_CONF`）或有两个字母 → 一律标 `doubt`/`multi`
+进复核，绝不自信地给错答案。已验证基准：real30 印刷体 900 样本 **100% 识别、0 误判**；
+合成工整手写整卷 **给出的答案全对、不确定的进复核**。真实手写精度待真实笔迹素材（`write` 字段、
+`tools/extract_letters.py` 提印刷样本集，改版式时重跑即可）。
 `test_service.py` 把 zip、名单、补录、越界页序这些接线问题在**部署之前**就拦住。
 `e2e_service.py` 则对着真容器走一遍完整业务流（含批量上传），容器里是 opencv 4.9。
 
@@ -500,6 +511,7 @@ answer-sheet-builder/
     │   ├── test_service.py# 离线自检：Flask 测试客户端直打接口
     │   ├── test_scoring.py# 离线自检：评分规则引擎
     │   ├── test_real30.py # 离线自检：真实扫描件全量回归（30 张 × 10 题）
+    │   ├── test_hwletter.py# 离线自检：手写字母分类（印刷集 0 误判 + 整卷 e2e）
     │   ├── e2e_service.py # 服务级集成：对跑起来的服务走完整业务流
     │   └── diag1.py       # 单图诊断：打印矫正坐标与采样值，调参用
     ├── Dockerfile

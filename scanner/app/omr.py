@@ -9,6 +9,8 @@ import math
 import numpy as np
 import cv2
 
+from . import hwletter
+
 FORMAT = 'asb-omr/2'
 FORMAT_READABLE = ('asb-omr/1', 'asb-omr/2')
 
@@ -214,10 +216,11 @@ def sample_bubbles(warp, page, px_per_mm, shrink=SHRINK):
     """按模板坐标采样每个填涂圈。
     每个选项输出两个量：
       ratio — 二值化后的深色像素占比（对光照鲁棒，用于区分「涂了 vs 没涂」）
-      ink   — 灰度墨迹均值 (0~1)（用于区分「深涂 vs 浅涂」：中灰色铅笔也要能识别）"""
+      ink   — 灰度墨迹均值 (0~1)（用于区分「深涂 vs 浅涂」：中灰色铅笔也要能识别）
+    手写作答题（q['write']，无 options）不在这条路上，由 decode_write 处理。"""
     norm, thr = _prep(warp)
     return [{'no': q['no'], 'options': _sample(norm, thr, q.get('options', []), px_per_mm, shrink)}
-            for q in page.get('questions', [])]
+            for q in page.get('questions', []) if q.get('options')]
 
 
 def decode_sid(warp, page, px_per_mm, fill_min=0.5, shrink=SHRINK):
@@ -309,7 +312,52 @@ def decide(sampled, fill_min=0.5, gap=0.15, rel_min=0.15, second_rel_min=0.2):
     return res
 
 
-def draw_overlay(warp, sampled, results, px_per_mm, scale=1.0, sid=None):
+def decode_write(warp, questions, px_per_mm, faint_ink=0.15):
+    """手写作答题：学生在固定作答框里**写** A/B/C/D（大小写均收）。
+
+    链路：作答框二值化 → hwletter 提取字形 → 结构特征打分分类。
+    flag 语义沿用阅卷工作台的约定：
+      ok     分类干净利落
+      doubt  置信度不足 hwletter.DOUBT_CONF —— 交复核，不硬猜
+      faint  分类出了结果但墨迹太轻（铅笔浅写）
+      multi  框里有两大团墨 —— 大概率写了两个字母
+      blank  空框
+    返回结果带 best/second/ratios/inks 兼容键（服务端 _recognize_bytes 统一拷贝），
+    best 存置信度、second 存次高分差值之前的次优类得分。
+    """
+    norm, thr = _prep(warp)
+    out = []
+    for q in questions:
+        wb = q.get('write') or {}
+        cx, cy = wb.get('x', 0) * px_per_mm, wb.get('y', 0) * px_per_mm
+        rx = max(2.0, wb.get('w', 6) * px_per_mm / 2.0)
+        ry = max(2.0, wb.get('h', 6) * px_per_mm / 2.0)
+        x0, x1 = max(0, int(round(cx - rx))), int(round(cx + rx)) + 1
+        y0, y1 = max(0, int(round(cy - ry))), int(round(cy + ry)) + 1
+        box = thr[y0:y1, x0:x1]
+        ink = float(((255.0 - norm[y0:y1, x0:x1]) / 255.0).mean()) if box.size else 0.0
+
+        r, meta = hwletter.classify_box(box)
+        if r is None:
+            flag = 'multi' if meta.get('multi') else 'blank'
+            row = {'no': q['no'], 'answer': None, 'flag': flag,
+                   'best': 0.0, 'second': 0.0, 'ratios': {}, 'inks': {},
+                   'blobs': meta.get('blobs', 0), 'x': wb.get('x'), 'y': wb.get('y'),
+                   'w': wb.get('w'), 'h': wb.get('h')}
+        else:
+            flag = r.get('flag_hint') or 'ok'
+            if flag == 'ok' and ink < faint_ink:
+                flag = 'faint'
+            row = {'no': q['no'], 'answer': r['letter'], 'flag': flag,
+                   'best': round(r['conf'], 3), 'second': 0.0,
+                   'ratios': {}, 'inks': {}, 'blobs': meta.get('blobs', 1),
+                   'features': r['features'], 'x': wb.get('x'), 'y': wb.get('y'),
+                   'w': wb.get('w'), 'h': wb.get('h')}
+        out.append(row)
+    return out
+
+
+def draw_overlay(warp, sampled, results, px_per_mm, scale=1.0, sid=None, writes=None):
     """生成校对图：绿=已选，红=存疑，灰=未选；并标注墨迹均值。
 
     考号填涂区一并画出来（选中的数字圈绿/红圈 + 圈旁标墨迹值）——
@@ -349,6 +397,17 @@ def draw_overlay(warp, sampled, results, px_per_mm, scale=1.0, sid=None):
         cv2.circle(img, (cx, cy), r_px, color, 3)
         cv2.putText(img, f"{pos['pos']}:{pos['digit']}", (cx + r_px + 2, cy + 4),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1, cv2.LINE_AA)
+
+    for wr in writes or []:
+        flag, ans = wr.get('flag'), wr.get('answer')
+        if not wr.get('w'):
+            continue
+        color = (40, 170, 60) if flag == 'ok' else ((150, 150, 150) if flag == 'blank' else (40, 60, 230))
+        cx, cy = int(round(wr['x'] * k)), int(round(wr['y'] * k))
+        rx, ry = int(round(wr['w'] * k / 2)), int(round(wr['h'] * k / 2))
+        cv2.rectangle(img, (cx - rx, cy - ry), (cx + rx, cy + ry), color, 2)
+        cv2.putText(img, f"{wr['no']}:{ans or '?'}({int((wr.get('best') or 0) * 100)})",
+                    (cx + rx + 2, cy + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
     return img
 
 
@@ -360,11 +419,16 @@ def recognize(image_bgr, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, gap=0.15,
     page = tpl['pages'][real_idx]
     sampled = sample_bubbles(warp, page, px)
     results = decide(sampled, fill_min=fill_min, gap=gap)
+    # 手写作答题（q.write，无 options）走结构分类，不占涂卡判定链路
+    wqs = [q for q in page.get('questions', []) if q.get('write') and not q.get('options')]
+    writes = decode_write(warp, wqs, px) if wqs else []
+    if writes:
+        results = sorted(results + writes, key=lambda r: str(r['no']))
     sid = decode_sid(warp, page, px, fill_min=fill_min)
     out = {'page': real_idx, 'questions': results, 'diag': diag, 'pxPerMm': px, 'sid': sid}
     if overlay:
         ov = draw_overlay(warp, sampled, results, px,
-                          scale=min(1.0, 1400.0 / warp.shape[1]), sid=sid)
+                          scale=min(1.0, 1400.0 / warp.shape[1]), sid=sid, writes=writes)
         ok_, buf = cv2.imencode('.png', ov)
         if ok_:
             out['overlayPng'] = buf.tobytes()
