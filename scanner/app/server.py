@@ -625,12 +625,35 @@ def get_exam():
     return jsonify(_exam_view(exam))
 
 
+def _tpl_caps(tpl):
+    """模板里到底有没有「填涂」块 —— 决定填涂类参数该不该显示在界面上。
+
+    纯手写模板（只有 write 作答框）时，老师调「填涂阈值 / 区分间距」是完全无效的：
+    这两个参数只进 `omr.decide()`（选择题填涂圈的判定）与 `omr.decode_sid()`
+    （考号填涂区）；手写作答框走 `decode_write`，一个都不用。留着只会误导人
+    —— 老师以为调了有用，实际识别结果纹丝不动。
+
+    而「采样精度 px/mm」**两者都作用**：透视校正后按 px/mm 重采样，手写字母
+    也是在这个分辨率下裁出来送进 hwletter / CNN 的，所以它永远不能藏。
+    """
+    bubble = False
+    sid = False
+    for p in ((tpl or {}).get('pages') or []):
+        if p.get('sid'):
+            sid = True
+        for q in (p.get('questions') or []):
+            if q.get('options'):
+                bubble = True
+    return {'bubble': bubble, 'sid': sid}
+
+
 def _exam_view(exam):
     return {
         'id': exam['id'], 'name': exam['name'], 'ownerId': exam['owner_id'],
         'createdAt': exam['created_at'], 'updatedAt': exam['updated_at'],
         'template': exam['tplSummary'],
         'hasTemplate': bool(exam['templateJson']),
+        'caps': _tpl_caps(exam['templateJson']),
         'roster': _roster_info(exam),
         'answerKey': _key_text(exam['answerKey']),
         'activeIds': exam['activeIds'], 'activeKind': exam['active_kind'],
@@ -1081,6 +1104,12 @@ def gradebook():
             #   machine / machineFlag / machineBy / fixNote —— 机器当时读到什么
             'answers': {str(k): _ans_view(v) for k, v in ans.items()},
             'fixedQnos': s.get('fixedQnos') or [],
+            # 逐页校对图（识别时就已按页落盘 DATA/<id>.png）：老师改答案时要能
+            # 对着原卷看机器读到的是什么，否则「人工修正」等于盲改。
+            'pages': [{'page': p.get('page'), 'id': p.get('id'),
+                       'overlay': bool(p.get('overlay')), 'name': p.get('name') or '',
+                       'ok': bool(p.get('ok'))}
+                      for p in (s.get('pages') or []) if p.get('id')],
         })
     graded = sum(1 for r in rows if r['grading'])
     review = sum(1 for r in rows if r['grading'].get('review'))

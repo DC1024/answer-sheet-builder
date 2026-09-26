@@ -162,6 +162,30 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 .chip.fixed { outline:2px solid #c0271f; color:#c0271f; }
 .qby { font-size:11px; color:var(--mut); margin-left:6px; }
 
+/* ---- 工作台：左边逐题改答案 / 右边原卷校对图（可缩放、可拖动） ---- */
+#gbModal .box{max-width:1120px;}
+.gbwrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,430px);gap:14px;margin-top:10px;align-items:start;}
+@media (max-width:960px){ .gbwrap{grid-template-columns:minmax(0,1fr);} }
+.gbimgcol{border:1px solid var(--line);border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;}
+.gbimgtools{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+.gbpages{display:flex;gap:6px;flex-wrap:wrap;}
+.gbpages button{padding:3px 9px;font-size:12px;}
+.gbpages button.on{background:#2b6cb0;color:#fff;border-color:#2b6cb0;}
+#gbImgBox{position:relative;overflow:hidden;height:440px;border:1px solid var(--line);
+  border-radius:6px;background:#f7f9fc;cursor:grab;touch-action:none;}
+#gbImgBox.grabbing{cursor:grabbing;}
+#gbImg{transform-origin:0 0;display:block;max-width:none;user-select:none;-webkit-user-drag:none;}
+
+/* ---- 分页导航 ---- */
+.tabs{position:sticky;top:0;z-index:60;background:#fff;border-bottom:1px solid var(--line);
+  display:flex;gap:2px;padding:0 20px;}
+.tab{appearance:none;border:0;background:none;padding:11px 18px;font-size:14px;cursor:pointer;
+  color:var(--mut);border-bottom:2px solid transparent;font-family:inherit;}
+.tab:hover{color:#2b6cb0;}
+.tab.on{color:#2b6cb0;border-bottom-color:#2b6cb0;font-weight:600;}
+.page{display:none;}
+.page.on{display:block;}
+
 </style>
 </head>
 <body>
@@ -179,7 +203,18 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
   <button id="btnLogout" class="ghost">退出</button>
 </header>
 
+<!-- 分页导航：扫描 / 统计 / 阅卷 / 设置。页面只是切显示，所有卡片始终在 DOM 里，
+     所以各页的按钮、输入框、事件绑定都不会因为切页而失效。 -->
+<nav class="tabs" id="tabs">
+  <button class="tab on" data-page="scan">扫描</button>
+  <button class="tab" data-page="stats">统计</button>
+  <button class="tab" data-page="grade">阅卷</button>
+  <button class="tab" data-page="set">设置</button>
+</nav>
+
 <div class="wrap">
+  <!-- 扫描页：模板 → 批量上传 → 单张排查 -->
+  <div class="page on" id="page-scan">
   <div class="card">
     <h2>① 阅卷模板 <span class="tag">答题卡生成器 →「🎯 阅卷模板」导出</span></h2>
     <div class="row">
@@ -217,9 +252,10 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
     <div class="row" style="border-top:1px solid var(--line);padding-top:10px">
       <span class="hint" style="min-width:60px">识别参数</span>
       <label class="f">采样精度(px/mm) <input type="number" id="pxPerMm" value="8" min="3" max="20" step="1"></label>
-      <label class="f">填涂阈值 <input type="number" id="fillMin" value="0.5" min="0.2" max="0.9" step="0.05"></label>
-      <label class="f">区分间距 <input type="number" id="gap" value="0.15" min="0.02" max="0.5" step="0.01"></label>
+      <label class="f" id="fillMinWrap" title="只作用于选择题填涂圈与卷面考号填涂区">填涂阈值 <input type="number" id="fillMin" value="0.5" min="0.2" max="0.9" step="0.05"></label>
+      <label class="f" id="gapWrap" title="只作用于选择题填涂圈（判浅涂/多选/存疑）">区分间距 <input type="number" id="gap" value="0.15" min="0.02" max="0.5" step="0.01"></label>
       <span class="hint">阈值越低越容易判为已涂；浅涂/多选会自动打「存疑」标记（单张扫描与批量共用这里）</span>
+      <span class="hint" id="capsHint" style="color:#c0271f"></span>
     </div>
 
     <div class="bar2" id="bProg" style="display:none"><i></i></div>
@@ -236,8 +272,12 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
     <div id="results"><div class="empty">还没有识别结果</div></div>
   </div>
 
+  </div>
+
+  <!-- 统计页：汇总统计 + 成绩分析 -->
+  <div class="page" id="page-stats">
   <div class="card">
-    <h2>④ 汇总统计 <span class="tag">默认针对最近一次识别；填标准答案可得正确率与得分</span></h2>
+    <h2>① 汇总统计 <span class="tag">默认针对最近一次识别；填标准答案可得正确率与得分</span></h2>
     <div class="row">
       <textarea id="key" placeholder="标准答案，例如：1A 2C 3B 4D …（也可只填字母序列 A C B D，按题号顺序）"></textarea>
     </div>
@@ -257,21 +297,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
   </div>
 
   <div class="card">
-    <h2>⑥ 阅卷工作台 <span class="tag">在识别结果上人工复核 / 改分 / 标注，存盘不丢</span></h2>
-    <div class="row">
-      <button id="gbRefresh" class="ghost">刷新</button>
-      <input type="text" id="gbSearch" placeholder="搜考号 / 姓名" style="width:160px">
-      <label class="f"><input type="checkbox" id="gbReviewOnly"> 只看待复核</label>
-      <span class="hint" id="gbSum"></span>
-      <span style="flex:1"></span>
-      <button id="gbPrint" class="ghost">打印成绩单（每人一页）</button>
-      <button id="gbExport" class="ghost">导出复核成绩 CSV</button>
-    </div>
-    <div id="gbBody"><div class="empty">还没有识别结果，先去②批量上传</div></div>
-  </div>
-
-  <div class="card">
-    <h2>⑦ 成绩分析 <span class="tag">基于工作台当前成绩（含人工复核与评分规则）</span></h2>
+    <h2>② 成绩分析 <span class="tag">基于工作台当前成绩（含人工复核与评分规则）</span></h2>
     <div class="row">
       <button id="anGo" class="ghost">生成分析</button>
       <label class="f">学号段
@@ -291,8 +317,30 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
       <div id="anDiff"><div class="empty">—</div></div></div>
   </div>
 
+  </div>
+
+  <!-- 阅卷页：逐人复核 / 改分 / 改答案 -->
+  <div class="page" id="page-grade">
+  <div class="card">
+    <h2>阅卷工作台 <span class="tag">在识别结果上人工复核 / 改分 / 标注，存盘不丢</span></h2>
+    <div class="row">
+      <button id="gbRefresh" class="ghost">刷新</button>
+      <input type="text" id="gbSearch" placeholder="搜考号 / 姓名" style="width:160px">
+      <label class="f"><input type="checkbox" id="gbReviewOnly"> 只看待复核</label>
+      <span class="hint" id="gbSum"></span>
+      <span style="flex:1"></span>
+      <button id="gbPrint" class="ghost">打印成绩单（每人一页）</button>
+      <button id="gbExport" class="ghost">导出复核成绩 CSV</button>
+    </div>
+    <div id="gbBody"><div class="empty">还没有识别结果，先去「扫描 → ②批量上传」</div></div>
+  </div>
+
+  </div>
+
+  <!-- 设置页：本机偏好 / 版本与更新 / 账号 -->
+  <div class="page" id="page-set">
   <div class="card" id="setCard">
-    <h2>⑧ 设置 <span class="tag">本机偏好 · 版本与更新</span></h2>
+    <h2>① 设置 <span class="tag">本机偏好 · 版本与更新</span></h2>
     <div class="row">
       <label class="f"><input type="checkbox" id="setAutoUpd"> 自动检查更新 <span class="hint">（打开界面时查一次，6 小时内不重复查）</span></label>
       <button id="btnUpd" class="ghost">检查更新</button>
@@ -308,7 +356,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 
   <!-- 只有管理员看得见（别人进来这段一直 display:none） -->
   <div class="card" id="userCard" style="display:none">
-    <h2>⑤ 账号管理 <span class="tag">管理员可见 · 所有登录用户都能看到所有考试，角色只决定能不能改</span></h2>
+    <h2>② 账号管理 <span class="tag">管理员可见 · 所有登录用户都能看到所有考试，角色只决定能不能改</span></h2>
     <div class="row">
       <input type="text" id="nu" placeholder="用户名" style="width:120px">
       <input type="text" id="nd" placeholder="姓名（可空）" style="width:110px">
@@ -321,6 +369,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
       <button id="btnAddUser">添加账号</button>
     </div>
     <div id="userList"></div>
+  </div>
   </div>
 </div>
 
@@ -490,7 +539,26 @@ async function openExam(id){
   await loadGradebook();
 }
 
+// 识别参数按模板类型显隐：纯手写模板（只有作答框）里没有填涂块，
+// 「填涂阈值 / 区分间距」调了也不会进识别链路，直接藏掉免得误导。
+// 「采样精度」对作答框识别仍有效（透视重采样分辨率），永远保留。
+function applyParamCaps(){
+  const caps = (CUR && CUR.caps) || {};
+  const hasTpl = !!(CUR && CUR.hasTemplate);
+  // 还没传模板时无从判断，先都显示（这时本来也识别不了）
+  const showFill = !hasTpl || caps.bubble || caps.sid;   // 考号填涂区也用 fillMin
+  const showGap = !hasTpl || caps.bubble;                // gap 只用在选择题填涂圈
+  const fw = $('#fillMinWrap'), gw = $('#gapWrap'), hint = $('#capsHint');
+  if (fw) fw.style.display = showFill ? '' : 'none';
+  if (gw) gw.style.display = showGap ? '' : 'none';
+  if (hint){
+    hint.textContent = (showFill && showGap) ? ''
+      : '当前模板没有选择题填涂块，填涂阈值 / 区分间距不适用已隐藏；「采样精度」对作答框识别仍然有效。';
+  }
+}
+
 function paintExam(){
+  applyParamCaps();
   $('#tplInfo').textContent = CUR.template ? tplLine(CUR.template) : '尚未上传模板';
   $('#key').value = CUR.answerKey || '';
   const r = CUR.roster || {};
@@ -1050,7 +1118,23 @@ function openGrade(sid){
       </div>`;
     }).join('') + '</div>';
   }
-  $('#gbModalBody').innerHTML = sidEdit + body;
+  // 右边：这个考生的原卷校对图（识别时逐页落盘，/api/overlay/<id>.png 取）
+  const imgPages = (s.pages || []).filter(p => p && p.overlay && p.id);
+  const imgPane = `<div class="gbimgcol">
+      <div class="gbimgtools">
+        <b style="font-size:13px">原卷校对图</b><span style="flex:1"></span>
+        <button class="ghost" id="gbZoomOut">缩小</button>
+        <button class="ghost" id="gbZoomIn">放大</button>
+        <button class="ghost" id="gbFit">适应</button>
+        <button class="ghost" id="gbReset">1:1</button>
+      </div>
+      ${imgPages.length ? `<div class="gbpages" id="gbPages">${imgPages.map((p, i) =>
+          `<button class="ghost${i ? '' : ' on'}" data-pid="${esc(p.id)}">第${(p.page != null ? p.page + 1 : 1)}面</button>`).join('')}</div>
+        <div id="gbImgBox"><img id="gbImg" src="/api/overlay/${esc(imgPages[0].id)}.png" alt="原卷校对图"></div>
+        <div class="hint">滚轮缩放 · 按住图片拖动移动 · 双击复位</div>`
+        : '<div class="hint" style="padding:16px 0">这个考生没有可用的校对图（这批可能是重传覆盖过的，或当时写盘失败）。</div>'}
+    </div>`;
+  $('#gbModalBody').innerHTML = sidEdit + '<div class="gbwrap">' + body + imgPane + '</div>';
   $('#gbModalTitle').textContent = `${s.sid} ${s.name || ''} ${s.cls || ''}`.trim();
   $('#gbReview').checked = GEDIT.review;
   $('#gbNote').value = GEDIT.note;
@@ -1058,6 +1142,62 @@ function openGrade(sid){
   $$('#gbModalBody select[data-q]').forEach(sel => sel.onchange = updateGbPreview);
   $('#gbManual').oninput = updateGbPreview;
   $$('#gbModalBody input.fixin').forEach(inp => inp.onchange = onFixAnswer);
+  // 校对图查看器：滚轮/按钮缩放 + 按住拖动平移 + 双击复位
+  const gbox = $('#gbImgBox'), gimg = $('#gbImg');
+  if (gbox && gimg){
+    const V = {s: 1, x: 0, y: 0};
+    const apply = () => { gimg.style.transform = `translate(${V.x}px,${V.y}px) scale(${V.s})`; };
+    const zoomAt = (f, cx, cy) => {
+      const ns = Math.min(8, Math.max(0.15, V.s * f));
+      const k = ns / V.s;
+      V.x = cx - (cx - V.x) * k; V.y = cy - (cy - V.y) * k; V.s = ns;
+      apply();
+    };
+    const fit = () => {
+      V.s = 1; V.x = 0; V.y = 0;
+      const bw = gbox.clientWidth, bh = gbox.clientHeight;
+      if (gimg.naturalWidth && bw && bh){
+        V.s = Math.min(bw / gimg.naturalWidth, bh / gimg.naturalHeight);
+      }
+      apply();
+    };
+    gimg.onload = fit;
+    gbox.addEventListener('wheel', e => {
+      e.preventDefault();
+      const r = gbox.getBoundingClientRect();
+      zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - r.left, e.clientY - r.top);
+    }, {passive: false});
+    let drag = false, sx = 0, sy = 0;
+    gbox.addEventListener('pointerdown', e => {
+      drag = true; sx = e.clientX - V.x; sy = e.clientY - V.y;
+      gbox.classList.add('grabbing');
+      try { gbox.setPointerCapture(e.pointerId); } catch (_) {}
+    });
+    gbox.addEventListener('pointermove', e => {
+      if (!drag) return;
+      V.x = e.clientX - sx; V.y = e.clientY - sy; apply();
+    });
+    const stopDrag = e => {
+      drag = false; gbox.classList.remove('grabbing');
+      try { gbox.releasePointerCapture(e.pointerId); } catch (_) {}
+    };
+    gbox.addEventListener('pointerup', stopDrag);
+    gbox.addEventListener('pointercancel', stopDrag);
+    gbox.addEventListener('pointerleave', stopDrag);
+    gbox.addEventListener('dblclick', fit);
+    const zin = $('#gbZoomIn'), zout = $('#gbZoomOut'), zfit = $('#gbFit'), zreset = $('#gbReset');
+    if (zin) zin.onclick = () => zoomAt(1.25, gbox.clientWidth / 2, gbox.clientHeight / 2);
+    if (zout) zout.onclick = () => zoomAt(1 / 1.25, gbox.clientWidth / 2, gbox.clientHeight / 2);
+    if (zfit) zfit.onclick = fit;
+    if (zreset) zreset.onclick = () => { V.s = 1; V.x = 0; V.y = 0; apply(); };
+    $$('#gbPages button').forEach(b => b.onclick = () => {
+      $$('#gbPages button').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+      gimg.src = '/api/overlay/' + b.dataset.pid + '.png';
+      V.s = 1; V.x = 0; V.y = 0; apply();
+    });
+    if (gimg.complete && gimg.naturalWidth) fit();
+  }
   const sidInp = $('#gbSidEdit');
   if (sidInp) sidInp.onchange = onFixSid;
   updateGbPreview();
@@ -1586,6 +1726,16 @@ $('#results').addEventListener('change', async e => {
   inp.classList.add('fixed');
   toast('已记人工修正：第 ' + q + ' 题 → ' + val);
 });
+
+// ============================================================ 页面切换（扫描/统计/阅卷/设置）
+// 只是切显示、不销毁 DOM —— 各页的按钮/输入框/事件绑定都还在，切回来状态也不丢。
+function goPage(p){
+  $$('#tabs .tab').forEach(b => b.classList.toggle('on', b.dataset.page === p));
+  $$('.page').forEach(el => el.classList.toggle('on', el.id === 'page-' + p));
+  try { localStorage.setItem('asb_page', p); } catch (_) {}
+}
+$$('#tabs .tab').forEach(b => b.onclick = () => goPage(b.dataset.page));
+try { const _p = localStorage.getItem('asb_page'); if (_p) goPage(_p); } catch (_) {}
 
 // ============================================================ 启动
 refreshSel();

@@ -5,7 +5,19 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
-_（暂无）_
+### Added / 新增
+- **扫描端：复核界面显示该生原卷校对图（可缩放 / 拖动）**。阅卷工作台弹窗改为**左右两栏**：左边逐题改答案，右边就是这个考生的原卷校对图 —— 老师改答案时能对着原卷看机器读到的是什么，不再是盲改。图片支持**滚轮缩放（以光标为锚点）**、按住拖动平移、双击复位，按钮「放大 / 缩小 / 适应 / 1:1」，多页卷子可逐面切换。没有可用校对图时（重传覆盖过 / 当时写盘失败）给明确文案，不留空白。
+  **Scanner: the review modal now shows the student's own scanned sheet** (zoomable / pannable) beside the per-question answer editor, so a teacher can compare against the original instead of editing blind. Wheel zoom is anchored at the cursor; press-and-drag pans; double-click resets; buttons for zoom in/out/fit/1:1; multi-page papers switch page by page.
+- **扫描端：拆成四个页面（扫描 / 统计 / 阅卷 / 设置）**。原先所有卡片挤在一页、要划很久才能找到目标。现在顶部 `sticky` 导航切换：扫描（阅卷模板 · 批量上传 · 单张扫描）/ 统计（汇总统计 · 成绩分析）/ 阅卷（阅卷工作台）/ 设置（设置 · 账号管理，版本与更新、自动更新开关一并归此）。实现上**只切显示、不销毁 DOM**，所以各页的按钮、输入框、事件绑定全部照旧有效，切回来状态也不丢；`localStorage` 记住上次所在页。
+  **Scanner: split into four pages** (Scan / Stats / Review / Settings) behind a sticky top nav. Pages are hidden with CSS only — nothing is torn down, so every control and event handler keeps working and state survives switching; the last page is remembered.
+
+### Changed / 变更
+- **扫描端：识别参数按模板类型自动显隐**。`填涂阈值 fillMin` 只作用于选择题填涂圈与卷面考号填涂区，`区分间距 gap` **只**作用于选择题填涂圈 —— 纯手写模板（只有 `write` 作答框）下这两个参数调了完全无效，现在自动隐藏并给一行红字说明，免得老师以为调了有用。`采样精度 pxPerMm` **两者都作用（透视重采样分辨率，手写字母也是在这个分辨率下裁出来送识别的），**永不隐藏**。后端 `_exam_view` 新增 `caps: {bubble, sid}`，前端 `applyParamCaps()` 据此显隐。
+  **Scanner: recognition parameters now show/hide per template capability.** `fillMin` only affects bubble-grid cells and the ID fill area, `gap` only affects bubble cells — on a pure-handwriting template both are inert, so they are hidden with a red note instead of misleading the teacher. `pxPerMm` applies to both paths and is never hidden. Backed by `caps: {bubble, sid}` in the exam view.
+
+### Fixed / 修复
+- **工作台弹窗逐题编辑区在无模板时一片空白**。`_qnos(exam, sheets)` 在「无模板且未传入识别结果」（工作台弹窗正是这样调用的）时直接返回空列表，导致方案徽标、机读标红、改答案输入框一个都渲染不出来。现在回退到库里已存学生答案的题号。真实场景考试都带模板所以长期不暴露，属潜在故障点；新增 `tests/test_qnos.py` 钉住。
+  **Fixed a blank per-question editor** when the exam has no template: `_qnos` returned an empty list, so the review modal rendered nothing. It now falls back to the question numbers recorded in stored student answers. Locked in by `tests/test_qnos.py`.
 
 ## [1.1.0] - 2026-09-26
 

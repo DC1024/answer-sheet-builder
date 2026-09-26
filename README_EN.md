@@ -65,7 +65,7 @@ Grab both zips from [Releases](https://github.com/DC1024/answer-sheet-builder/re
 Data defaults to `%LOCALAPPDATA%\asb-scanner\data` (copying that folder is a full backup). Each zip ships a
 `使用说明.txt`. If antivirus flags the exe, allow it — false positives on PyInstaller one-file bundles are common.
 
-Both ends have a **settings panel** (⚙ in the builder's toolbar, card ⑧ in the scanner) where you can
+Both ends have a **settings panel** (⚙ in the builder's toolbar, "Settings → ① Settings" in the scanner) where you can
 **toggle the automatic update check**, **check manually** and **see the version**. A blocked network shows
 "could not check" with a reason rather than an error — an intranet that cannot reach GitHub is normal, not a
 failure. Point `ASB_UPDATE_API` at a mirror or your own fork to change where it looks.
