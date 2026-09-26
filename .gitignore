@@ -30,10 +30,16 @@ packaging/windows/dist/
 packaging/windows/*-stale-*/
 # 打包脚本用的临时探针文件
 packaging/windows/_*.txt
+
+# 验证/发版过程中的一次性草稿（根目录，不进库）
 _build_*.log
 _build_*.md
 _build_exit.txt
 _psparse.txt
 _procs.txt
-_clean.txt
+_clean*.txt
+_cleanresult.txt
+_profile.txt
+_deltest.txt
 _smoke*.log
+_smoke*.txt
