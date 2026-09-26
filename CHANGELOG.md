@@ -402,7 +402,8 @@ _（暂无）_
 - Docker 部署（`Dockerfile` + `docker-compose.yml`），纯静态无需后端。
   Docker deployment; pure static, no backend.
 
-[Unreleased]: https://github.com/DC1024/answer-sheet-builder/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/DC1024/answer-sheet-builder/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.1.0
 [1.0.3]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.3
 [1.0.2]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.2
 [1.0.1]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.1
