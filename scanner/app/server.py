@@ -341,7 +341,15 @@ def _qnos(exam, sheets):
     tpl = exam.get('templateJson')
     if tpl:
         return sorted({q['no'] for p in tpl['pages'] for q in p.get('questions', [])})
-    return sorted({q for s in sheets for q in s['answers']})
+    qset = set()
+    for s in (sheets or []):
+        qset |= set((s.get('answers') or {}).keys())
+    if not qset:
+        # 既没模板、调用方也没传入结果（如工作台弹窗），退回库里已存的学生答案题号，
+        # 否则工作台弹窗一题都渲染不出来（机读/方案徽标/改答案输入框全空）。
+        for s in STORE.students(exam['id']):
+            qset |= set((s.get('answers') or {}).keys())
+    return sorted(qset)
 
 
 # ---------------------------------------------------------------- 名单 / 补录
