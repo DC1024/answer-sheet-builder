@@ -2,3 +2,5 @@ flask==3.0.3
 numpy==1.26.4
 opencv-python-headless==4.9.0.80
 waitress==3.0.2
+# 注：手写 A-D CNN（app/cnn_letter.py）需要的 PyTorch 不在此处 —— 见 Dockerfile 单独安装。
+# 缺失时 app 仍正常启动，decode_write 自动退回纯 OpenCV（_get_cnn_model 优雅降级）。

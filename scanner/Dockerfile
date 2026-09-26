@@ -10,6 +10,12 @@ WORKDIR /srv
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -i ${PIP_INDEX} -r requirements.txt
 
+# 手写 A-D CNN（app/cnn_letter.py）所需的 PyTorch CPU 版，单独从官方 PyPI 装
+# （tuna 镜像不保证同步 torch 这种大体量包）。缺失时 app 仍正常启动，
+# decode_write 自动退回纯 OpenCV（_get_cnn_model 优雅降级）。
+# 锁定 2.14.0 与训练环境一致，避免 state_dict 跨版本加载风险。
+RUN pip install --no-cache-dir torch==2.14.0
+
 COPY app ./app
 
 EXPOSE 8081

@@ -312,21 +312,34 @@ def decide(sampled, fill_min=0.5, gap=0.15, rel_min=0.15, second_rel_min=0.2):
     return res
 
 
-def decode_write(warp, questions, px_per_mm, faint_ink=0.15):
+def decode_write(warp, questions, px_per_mm, faint_ink=0.15, cnn_model=None):
     """手写作答题：学生在固定作答框里**写** A/B/C/D（大小写均收）。
 
-    链路：作答框二值化 → hwletter 提取字形 → 结构特征打分分类。
+    默认（cnn_model=None）：沿用纯 OpenCV 结构分类（hwletter），行为完全不变 ——
+    这样没装 torch / 没有权重的部署容器导入 app 包、请求不带 cnn_model 时仍可用。
+
+    传入 cnn_model 时：**CNN 作为一选分类器，OpenCV hwletter 退为二选 / 交叉验证**：
+      · 两分类器结果不一致 → flag='review'（最该人工核的一档）
+      · CNN 置信 < cnn_letter.CNN_THRESH → flag='doubt' / 'review'（不硬猜，交复核）
+      · 两分类器一致且 CNN 够自信 → flag='ok'
+
     flag 语义沿用阅卷工作台的约定：
-      ok     分类干净利落
-      doubt  置信度不足 hwletter.DOUBT_CONF —— 交复核，不硬猜
+      ok     两分类器一致且 CNN 足够自信（或纯 OpenCV 干净利落）
+      review 两分类器不一致（或 CNN 低置信且 OpenCV 给的是另一个字母）
+      doubt  CNN 不自信（低置信）或纯 OpenCV 置信不足 DOUBT_CONF —— 交复核，不硬猜
       faint  分类出了结果但墨迹太轻（铅笔浅写）
       multi  框里有两大团墨 —— 大概率写了两个字母
       blank  空框
-    返回结果带 best/second/ratios/inks 兼容键（服务端 _recognize_bytes 统一拷贝），
-    best 存置信度、second 存次高分差值之前的次优类得分。
+    返回结果带 best/second/ratios/inks 兼容键（服务端 _recognize_bytes 统一拷贝）：
+      best   = CNN 置信度（无 CNN 时为 OpenCV 评分差）
+      second = OpenCV 置信度（无 CNN 时为 0）
+    额外回吐 cnn={letter,conf,ocLetter,ocConf} 供前端复核页并排展示两路意见。
     """
     norm, thr = _prep(warp)
     out = []
+    use_cnn = cnn_model is not None
+    if use_cnn:
+        from . import cnn_letter
     for q in questions:
         wb = q.get('write') or {}
         cx, cy = wb.get('x', 0) * px_per_mm, wb.get('y', 0) * px_per_mm
@@ -337,22 +350,67 @@ def decode_write(warp, questions, px_per_mm, faint_ink=0.15):
         box = thr[y0:y1, x0:x1]
         ink = float(((255.0 - norm[y0:y1, x0:x1]) / 255.0).mean()) if box.size else 0.0
 
-        r, meta = hwletter.classify_box(box)
-        if r is None:
+        if not use_cnn:
+            # ---- 纯 OpenCV 老路径（无 torch / 无权重容器）----
+            r, meta = hwletter.classify_box(box)
+            if r is None:
+                flag = 'multi' if meta.get('multi') else 'blank'
+                row = {'no': q['no'], 'answer': None, 'flag': flag,
+                       'best': 0.0, 'second': 0.0, 'ratios': {}, 'inks': {},
+                       'blobs': meta.get('blobs', 0), 'x': wb.get('x'), 'y': wb.get('y'),
+                       'w': wb.get('w'), 'h': wb.get('h')}
+            else:
+                flag = r.get('flag_hint') or 'ok'
+                if flag == 'ok' and ink < faint_ink:
+                    flag = 'faint'
+                row = {'no': q['no'], 'answer': r['letter'], 'flag': flag,
+                       'best': round(r['conf'], 3), 'second': 0.0,
+                       'ratios': {}, 'inks': {}, 'blobs': meta.get('blobs', 1),
+                       'features': r['features'], 'x': wb.get('x'), 'y': wb.get('y'),
+                       'w': wb.get('w'), 'h': wb.get('h')}
+            out.append(row)
+            continue
+
+        # ---- CNN 一选 + OpenCV 交叉验证 ----
+        glyph, meta = hwletter.extract_glyph(box)
+        if glyph is None:
+            # 没提成形字形：和老路径一样判 multi/blank（无 CNN 介入）
             flag = 'multi' if meta.get('multi') else 'blank'
             row = {'no': q['no'], 'answer': None, 'flag': flag,
                    'best': 0.0, 'second': 0.0, 'ratios': {}, 'inks': {},
                    'blobs': meta.get('blobs', 0), 'x': wb.get('x'), 'y': wb.get('y'),
                    'w': wb.get('w'), 'h': wb.get('h')}
+            out.append(row)
+            continue
+
+        cnn_lbl, cnn_conf = cnn_letter.classify_glyph(glyph, cnn_model)
+        oc = hwletter.classify(glyph)
+        oc_letter = oc['letter'] if oc else None
+        oc_conf = oc['conf'] if oc else 0.0
+
+        if cnn_conf >= cnn_letter.CNN_THRESH:
+            letter = cnn_lbl
+            flag = 'review' if (oc_letter is not None and oc_letter != cnn_lbl) else 'ok'
         else:
-            flag = r.get('flag_hint') or 'ok'
-            if flag == 'ok' and ink < faint_ink:
-                flag = 'faint'
-            row = {'no': q['no'], 'answer': r['letter'], 'flag': flag,
-                   'best': round(r['conf'], 3), 'second': 0.0,
-                   'ratios': {}, 'inks': {}, 'blobs': meta.get('blobs', 1),
-                   'features': r['features'], 'x': wb.get('x'), 'y': wb.get('y'),
-                   'w': wb.get('w'), 'h': wb.get('h')}
+            # CNN 不自信：仍输出它的猜测，但标存疑
+            letter = cnn_lbl
+            if oc_letter is None:
+                flag = 'doubt'            # 两路都读不出 → 复核
+            elif oc_letter == cnn_lbl:
+                flag = 'doubt'            # 一致但 CNN 低置信 → 复核
+            else:
+                flag = 'review'           # 不一致 → 复核
+        if flag == 'ok' and ink < faint_ink:
+            flag = 'faint'
+
+        row = {'no': q['no'], 'answer': letter, 'flag': flag,
+               'best': round(cnn_conf, 3), 'second': round(oc_conf, 3),
+               'ratios': {}, 'inks': {},
+               'blobs': meta.get('blobs', 1),
+               'features': oc['features'] if oc else {},
+               'cnn': {'letter': cnn_lbl, 'conf': round(cnn_conf, 3),
+                       'ocLetter': oc_letter, 'ocConf': round(oc_conf, 3)},
+               'x': wb.get('x'), 'y': wb.get('y'), 'w': wb.get('w'), 'h': wb.get('h')}
         out.append(row)
     return out
 
@@ -411,8 +469,13 @@ def draw_overlay(warp, sampled, results, px_per_mm, scale=1.0, sid=None, writes=
     return img
 
 
-def recognize(image_bgr, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, gap=0.15, overlay=True):
-    """完整识别流程：定位 → 矫正 → 采样 → 判定（含考号填涂区）"""
+def recognize(image_bgr, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, gap=0.15,
+               overlay=True, cnn_model=None):
+    """完整识别流程：定位 → 矫正 → 采样 → 判定（含考号填涂区）
+
+    cnn_model: 可选的手写 A-D CNN 模型（app.cnn_letter.load_model 返回值）。
+    传入时手写作答题走「CNN 一选 + OpenCV 交叉验证」；None 时退化为纯 OpenCV。
+    """
     quad, diag = detect_marks(image_bgr, tpl, page_idx)
     warp, px = warp_page(image_bgr, quad, tpl, px_per_mm, page_idx)
     _, real_idx = _template_quad(tpl, page_idx)
@@ -421,7 +484,7 @@ def recognize(image_bgr, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, gap=0.15,
     results = decide(sampled, fill_min=fill_min, gap=gap)
     # 手写作答题（q.write，无 options）走结构分类，不占涂卡判定链路
     wqs = [q for q in page.get('questions', []) if q.get('write') and not q.get('options')]
-    writes = decode_write(warp, wqs, px) if wqs else []
+    writes = decode_write(warp, wqs, px, cnn_model=cnn_model) if wqs else []
     if writes:
         results = sorted(results + writes, key=lambda r: str(r['no']))
     sid = decode_sid(warp, page, px, fill_min=fill_min)

@@ -64,15 +64,42 @@ def _decode(data):
     return img
 
 
-def _recognize_bytes(data, name, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, gap=0.15):
+# ---------------------------------------------------------------- 手写 CNN 懒加载
+#
+# 权重（hwletter_cnn.pt）和 torch 都不保证在容器里存在 —— 没权重 / 没 torch 时，
+# 整条手写识别退回纯 OpenCV（decode_write(cnn_model=None)），绝不因加载失败而崩。
+# 所以这里只在**第一次**被请求时尝试加载一次，失败就永远返回 None，并记一条日志。
+_CNN_MODEL = None
+_CNN_TRIED = False
+
+
+def _get_cnn_model():
+    """返回已加载的 CNN 模型，或 None（无权重/无 torch/加载失败）。线程安全由 GIL 兜底。"""
+    global _CNN_MODEL, _CNN_TRIED
+    if _CNN_TRIED:
+        return _CNN_MODEL
+    _CNN_TRIED = True
+    try:
+        from . import cnn_letter
+        _CNN_MODEL = cnn_letter.load_model()
+        app.logger.info('手写 CNN 已加载：hwletter_cnn.pt')
+    except Exception as e:  # noqa: BLE001 —— 任何失败都退回 OpenCV，不该让请求崩
+        _CNN_MODEL = None
+        app.logger.warning('手写 CNN 加载失败，退回纯 OpenCV：%s', e)
+    return _CNN_MODEL
+
+
+def _recognize_bytes(data, name, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, gap=0.15,
+                     cnn_model=None):
     """识别一张图 → (结果字典, answers)。识别失败时 answers 为 None。
 
     单张扫描和批量上传都走这里 —— 免得两条路各修一次、还修得不一样。
+    cnn_model: 手写 A-D CNN（传 None 则 decode_write 退化为纯 OpenCV）。
     """
     try:
         img = _decode(data)
         r = omr.recognize(img, tpl, page_idx=page_idx, px_per_mm=px_per_mm,
-                          fill_min=fill_min, gap=gap)
+                          fill_min=fill_min, gap=gap, cnn_model=cnn_model)
         rid = uuid.uuid4().hex[:12]
         png = r.pop('overlayPng', None)
         saved = _save_overlay(rid, png) if png else False
@@ -539,10 +566,11 @@ def scan():
     page_idx, px_per_mm, fill_min, gap = _params()
     _page_guard(tpl, page_idx)
 
+    cnn_model = _get_cnn_model()   # 第一次请求时尝试加载一次，失败退回 OpenCV
     out, saved = [], []
     for f in files:
         r, answers = _recognize_bytes(f.read(), f.filename, tpl,
-                                      page_idx, px_per_mm, fill_min, gap)
+                                      page_idx, px_per_mm, fill_min, gap, cnn_model)
         if answers is not None:
             saved.append((r['id'], f.filename, answers, None, None, None, f.filename))
         out.append(r)
@@ -563,6 +591,7 @@ def batch_api():
     if not files:
         return _err('没有上传扫描件（zip 压缩包 / 整张图片 / 整个文件夹都行）')
     page_idx, px_per_mm, fill_min, gap = _params()
+    cnn_model = _get_cnn_model()   # 手写 CNN：第一次请求时加载一次，失败退回 OpenCV
 
     # 选文件夹上传时浏览器会带 webkitRelativePath，用它还原目录结构；顺序与 files 对齐
     paths = request.form.getlist('paths')
@@ -597,7 +626,7 @@ def batch_api():
                 continue
             r, answers = _recognize_bytes(p['data'], p['name'], tpl,
                                           page_idx=p['page'], px_per_mm=px_per_mm,
-                                          fill_min=fill_min, gap=gap)
+                                          fill_min=fill_min, gap=gap, cnn_model=cnn_model)
             r['page'] = p['page']
             r['hinted'] = p.get('hinted')
             r['source'] = p['relpath']

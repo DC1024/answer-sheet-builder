@@ -3,7 +3,11 @@ import csv
 import io
 from collections import Counter, defaultdict
 
-FLAG_TEXT = {'ok': '', 'multi': '多选/存疑', 'faint': '浅涂存疑', 'blank': '未填'}
+FLAG_TEXT = {'ok': '', 'multi': '多选/存疑', 'faint': '浅涂存疑', 'blank': '未填',
+              'review': '两分类器不一致/存疑', 'doubt': '置信不足'}
+
+# 这些 flag 都代表「该人工复核的题」—— 出现在统计的 doubt 计数里。
+DOUBT_FLAGS = ('multi', 'faint', 'review', 'doubt')
 
 
 def parse_key(text):
@@ -49,7 +53,7 @@ def summarize(sheets, question_numbers, key=None):
                 dist[q][v] += 1
             if flag == 'blank':
                 n_blank[q] += 1
-            if flag in ('multi', 'faint'):
+            if flag in DOUBT_FLAGS:
                 n_multi[q] += 1
             kv = (key or {}).get(q)
             if kv:
@@ -64,7 +68,7 @@ def summarize(sheets, question_numbers, key=None):
             'score': correct,
             'total': len([q for q in qnos if (key or {}).get(q)]),
             'blank': len([q for q in qnos if ans.get(q, {}).get('flag') == 'blank']),
-            'doubt': len([q for q in qnos if ans.get(q, {}).get('flag') in ('multi', 'faint')]),
+            'doubt': len([q for q in qnos if ans.get(q, {}).get('flag') in DOUBT_FLAGS]),
             'wrong': sorted(wrong, key=lambda x: x['no']),
         })
 
