@@ -8,7 +8,7 @@
 // （`Access-Control-Allow-Origin: *`），所以浏览器能直接跨域 GET ——
 // 制卡端不需要任何后端就能查更新。代价是必须能上外网，内网/离线时只会
 // 提示「暂时查不到」，不会报错。
-export const APP_VERSION = '1.0.3';
+export const APP_VERSION = '1.1.0';
 
 export const REPO = 'DC1024/answer-sheet-builder';
 export const RELEASES_URL = `https://github.com/${REPO}/releases`;

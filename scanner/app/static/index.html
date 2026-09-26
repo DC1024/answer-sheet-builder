@@ -145,6 +145,23 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 #anDiff .pill.ez{background:#e3f4e6;color:#1c7c33}
 #anDiff .pill.md{background:#e2eefa;color:#1d5fbf}
 #anDiff .pill.hd{background:#fdeaea;color:#b3261e}
+
+/* 识别方案标识 + 人工修正 */
+.gbq-hd { font-size:12px; color:var(--mut); margin:4px 0 8px; }
+.gb-sid { margin-bottom:10px; }
+.eng { display:inline-block; font-size:11px; padding:1px 7px; border-radius:10px; margin-left:4px; vertical-align:middle; white-space:nowrap; }
+.eng-rule { background:#e7f0ff; color:#1f5fbf; }
+.eng-cnn  { background:#eaf7ee; color:#1f8a4c; }
+.eng-both { background:#f3ecff; color:#6a3fb0; }
+.eng-mix  { background:#fff1e0; color:#b06a00; }
+.eng-none { background:#f0f0f0; color:#888; }
+.fixmark { display:inline-block; font-size:11px; padding:1px 6px; border-radius:10px; background:#fdeaea; color:#c0271f; margin-left:4px; vertical-align:middle; }
+.fixin { width:46px; text-align:center; text-transform:uppercase; font-weight:700; padding:3px 4px; }
+.fixin.fixed { background:#fdeaea; color:#c0271f; border-color:#f0b0aa; }
+.machine { color:#c0271f; text-decoration:underline dotted; }
+.chip.fixed { outline:2px solid #c0271f; color:#c0271f; }
+.qby { font-size:11px; color:var(--mut); margin-left:6px; }
+
 </style>
 </head>
 <body>
@@ -230,6 +247,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
       <button id="btnRules" class="ghost">评分规则…</button>
       <button id="btnCsv" class="ghost">导出成绩 CSV</button>
       <button id="btnRosterCsv" class="ghost">导出名单对账 CSV</button>
+      <button id="btnEng" class="ghost">识别方案与误判率</button>
       <span class="hint" id="statsInfo"></span>
     </div>
     <div class="grid2">
@@ -351,6 +369,20 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
   <div class="row"><textarea id="gbNote" placeholder="备注（可选）"></textarea></div>
   <div class="row"><button id="gbSave">保存复核</button>
     <span class="hint">复核结果随考试存盘：刷新 / 重新套名单 / 重启服务都不会丢</span></div>
+</div></div>
+
+<!-- 识别方案与误判率弹窗：按方案统计「被老师改掉的比例」 -->
+<div id="engModal"><div class="box">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px">
+    <h3>识别方案与误判率 <span class="hint" style="font-weight:400">判断哪套方案更准</span></h3>
+    <button class="ghost" id="engClose">关闭</button>
+  </div>
+  <div class="hint" style="margin-bottom:8px">
+    两套识别方案：<b>结构特征规则</b>（纯 OpenCV，选择题填涂圈判定，零模型）；
+    <b>CNN</b>（手写 A–D 交叉验证，装好 torch 权重后启用）。
+    只有老师亲手改过的题才进统计 —— 这是「被检查到的题里的出错比例」，<b>不等于全量准确率</b>。
+  </div>
+  <div id="engBody"><div class="empty">—</div></div>
 </div></div>
 
 <script>
@@ -696,9 +728,13 @@ function renderBatch(r){
       : (s.matched === false ? '<span class="badge warn">不在名单</span>' : '<span class="badge">未提供名单</span>');
     const chips = nos.map(k => {
       const a = ans[k] || {};
+      const isFix = a.by === 'fix';
       const cls = a.flag === 'blank' ? 'none' : (a.flag && a.flag !== 'ok' ? 'bad' : '');
+      const cls2 = isFix ? ' fixed' : '';
       const t = a.answer ? `${k}${a.answer}` : `${k}—`;
-      return `<span class="chip ${cls}" title="${flagText[a.flag]||''}">${esc(t)}</span>`;
+      const sch = qScheme(a);
+      const title = (flagText[a.flag] || '') + (sch ? ' · ' + (SCHEME_ZH[sch] || sch) : '') + (isFix ? ' · 已人工修正' : '');
+      return `<span class="chip ${cls}${cls2}" title="${esc(title)}">${esc(t)}</span>`;
     }).join('');
 
     const thumbs = pages.map(p => p.overlay
@@ -732,6 +768,7 @@ function renderBatch(r){
         <div>
           ${label}
           ${srcBadge}
+          ${paperSchemeBadge(ans)}
           <span class="badge ${bad||fail?'warn':'ok'}">${pages.length} 面${fail?` · ${fail} 面失败`:''}${bad?` · ${bad} 项待确认`:''}</span>
         </div>
       </div>
@@ -790,7 +827,10 @@ function renderResults(list){
       const cells = q.ratios ? Object.keys(q.ratios).sort().map(k =>
         `<td class="num" title="${k}">${(q.ratios[k]*100).toFixed(0)}%</td>`).join('') : '';
       const head = q.ratios ? Object.keys(q.ratios).sort().map(k => `<th class="num">${k}</th>`).join('') : '';
-      return {q, cells, head};
+      const isFix = q.by === 'fix';
+      const machine = (q.machine != null && q.machine !== '') ? q.machine : '';
+      const ans = q.answer || '—';
+      return {q, cells, head, isFix, machine, ans, rid: r.id};
     });
     const head = rows[0] ? rows[0].head : '';
     // 校对图存不下来时不要塞一个必然 404 的 <img>，否则左边只剩一个碎图标
@@ -809,8 +849,10 @@ function renderResults(list){
         ${left}
         <div style="max-height:420px;overflow:auto;">
           <table><thead><tr><th>题号</th><th>答案</th><th>判定</th>${head}</tr></thead><tbody>
-          ${rows.map(x => `<tr><td>${x.q.no}</td><td><b>${x.q.answer||'—'}</b></td>
-            <td><span class="badge ${flagCls[x.q.flag]||''}">${flagText[x.q.flag]||x.q.flag}</span></td>${x.cells}</tr>`).join('')}
+          ${rows.map(x => `<tr><td>${x.q.no}</td>
+            <td><input class="fixin${x.isFix ? ' fixed' : ''}" data-rid="${esc(x.rid)}" data-q="${x.q.no}" value="${esc(x.ans)}" maxlength="6"
+              ${canWrite() ? '' : 'disabled'} title="${x.machine ? ('机器原读 ' + x.machine) : '改答案即记人工修正'}"></td>
+            <td><span class="badge ${flagCls[x.q.flag]||''}">${flagText[x.q.flag]||x.q.flag}</span> ${schemeBadge(x.q)} ${x.isFix ? '<span class="fixmark">已修正</span>' : ''}</td>${x.cells}</tr>`).join('')}
           </tbody></table>
         </div>
       </div>`;
@@ -963,7 +1005,7 @@ function renderGradebook(){
       <td>${esc(s.sid)}</td><td>${esc(s.name || '')}</td><td>${esc(s.cls || '')}</td>
       <td class="num">${GB.hasKey ? s.auto + '/' + s.total : '—'}</td>
       <td class="num">${GB.hasKey ? s.effective + '/' + s.total : '—'}</td>
-      <td>${(s.grading.review ? '<span class="badge warn">待复核</span>' : '')}${(s.grading.note ? '<span class="badge info">有备注</span>' : '')}</td>
+      <td>${(s.grading.review ? '<span class="badge warn">待复核</span>' : '')}${(s.grading.note ? '<span class="badge info">有备注</span>' : '')}${(s.fixedQnos && s.fixedQnos.length ? '<span class="fixmark">人工修正</span>' : '')}${paperSchemeBadge(s.answers)}</td>
       <td><button class="ghost" data-sid="${esc(s.sid)}">复核</button></td>
     </tr>`).join('')}</tbody></table>`;
   $$('#gbBody button[data-sid]').forEach(b => b.onclick = () => openGrade(b.dataset.sid));
@@ -976,35 +1018,48 @@ function openGrade(sid){
            overrides: Object.assign({}, (s.grading.overrides) || {}),
            review: !!s.grading.review, note: s.grading.note || ''};
   const ans = s.answers || {};
+  const sidEdit = canWrite()
+    ? `<div class="row gb-sid"><label class="f">卷面考号 <input id="gbSidEdit" value="${esc(s.sid)}" maxlength="40" style="width:170px"></label>
+         <span class="hint">机器读错考号会把整份卷子归错人；改完即时生效</span></div>`
+    : `<div class="row gb-sid"><span class="hint">卷面考号 <b>${esc(s.sid)}</b></span></div>`;
   const key = GB.key || {};
   let body;
   if (!GB.hasKey){
     body = '<div class="hint" style="padding:12px 0">请先在④汇总统计里填好「标准答案」，才能逐题复核。</div>';
   } else {
-    body = '<div class="gbq">' + (GB.qnos || []).filter(q => key[q]).map(q => {
-      const a = ans[q] || {};
+    body = `<div class="gbq-hd">逐题改答案（人工修正）→ 同步进分布统计 / 导出 / 判分；机器原读标红，改完即记一次修正</div>`
+      + '<div class="gbq">' + (GB.qnos || []).map(q => {
+      const a = ans[String(q)] || ans[q] || {};
       const det = a.answer ? a.answer : '未填';
+      const isFix = a.by === 'fix' || (s.fixedQnos || []).indexOf(+q) >= 0 || (s.fixedQnos || []).indexOf(String(q)) >= 0;
+      const machine = (a.machine != null && a.machine !== '') ? a.machine : (isFix ? '?' : '');
       const auto = s.correct ? s.correct[String(q)] : null;
       const ov = String(q) in (GEDIT.overrides || {}) ? (GEDIT.overrides[String(q)] ? '对' : '错') : 'auto';
       const autoTxt = auto === true ? '自动判对' : (auto === false ? '自动判错' : '无答案');
       return `<div class="qrow">
-        <span class="qno">第 ${q} 题</span>
-        <span class="qd">填涂 <b>${esc(det)}</b> ／ 答案 <b>${esc(key[q])}</b></span>
+        <span class="qno">第 ${q} 题 ${schemeBadge(a)}</span>
+        <span class="qd">机器读 <b class="machine">${esc(machine || '—')}</b> ／ 人工
+          <input class="fixin${isFix ? ' fixed' : ''}" data-q="${q}" value="${esc(det)}" maxlength="6"
+            ${canWrite() ? '' : 'disabled'} title="机器原读 ${esc(machine || '—')}；改成正确选项即记一次人工修正"></span>
         <select data-q="${q}">
           <option value="auto"${ov === 'auto' ? ' selected' : ''}>${autoTxt}</option>
           <option value="correct"${ov === '对' ? ' selected' : ''}>判对</option>
           <option value="wrong"${ov === '错' ? ' selected' : ''}>判错</option>
         </select>
+        ${isFix ? '<span class="fixmark">已人工修正</span>' : ''}
       </div>`;
     }).join('') + '</div>';
   }
-  $('#gbModalBody').innerHTML = body;
+  $('#gbModalBody').innerHTML = sidEdit + body;
   $('#gbModalTitle').textContent = `${s.sid} ${s.name || ''} ${s.cls || ''}`.trim();
   $('#gbReview').checked = GEDIT.review;
   $('#gbNote').value = GEDIT.note;
   $('#gbManual').value = (GEDIT.manualScore != null) ? GEDIT.manualScore : '';
   $$('#gbModalBody select[data-q]').forEach(sel => sel.onchange = updateGbPreview);
   $('#gbManual').oninput = updateGbPreview;
+  $$('#gbModalBody input.fixin').forEach(inp => inp.onchange = onFixAnswer);
+  const sidInp = $('#gbSidEdit');
+  if (sidInp) sidInp.onchange = onFixSid;
   updateGbPreview();
   $('#gbModal').classList.add('on');
 }
@@ -1050,7 +1105,7 @@ $('#gbExport').onclick = () => download('/api/export.csv', {key: $('#key').value
 $('#gbClose').onclick = () => $('#gbModal').classList.remove('on');
 $('#gbSave').onclick = saveGrade;
 $('#gbModal').addEventListener('click', e => { if (e.target.id === 'gbModal') $('#gbModal').classList.remove('on'); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape'){ $('#gbModal').classList.remove('on'); $('#ruleModal').classList.remove('on'); } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape'){ $('#gbModal').classList.remove('on'); $('#ruleModal').classList.remove('on'); $('#engModal').classList.remove('on'); } });
 
 // ============================================================ ④½ 评分规则编辑器
 // 规则模型与后端 app/scoring.py 对齐：
@@ -1428,6 +1483,109 @@ $('#setAutoUpd').onchange = async e => {
     toast('保存失败：' + err.message);
   }
 };
+
+// ============================================================ 识别方案标识 + 人工修正
+const SCHEME_ZH = {rule: '结构特征规则', cnn: 'CNN', both: '两路均未定音'};
+function schemeClass(by){
+  if (by === 'rule') return 'eng-rule';
+  if (by === 'cnn') return 'eng-cnn';
+  if (by === 'both') return 'eng-both';
+  return 'eng-none';
+}
+// 一道题用的哪套方案：被人工改过的题，方案看 machineBy（它才是机器当时用的方案）
+function qScheme(a){
+  if (!a) return '';
+  if (a.by === 'fix') return a.machineBy || '';
+  return a.by || '';
+}
+function schemeBadge(a){
+  const by = qScheme(a);
+  if (!by) return '';
+  return `<span class="eng ${schemeClass(by)}" title="识别方案：${esc(SCHEME_ZH[by] || by)}">${esc(SCHEME_ZH[by] || by)}</span>`;
+}
+// 整份卷子的方案口径：题目里出现过的方案集合（rule / cnn / 混合）
+function paperScheme(ans){
+  const set = new Set();
+  for (const k in (ans || {})){ const s = qScheme(ans[k]); if (s) set.add(s); }
+  if (set.size === 0) return {cls: 'eng-none', text: '无方案信息'};
+  if (set.size === 1){ const b = [...set][0]; return {cls: schemeClass(b), text: SCHEME_ZH[b] || b}; }
+  return {cls: 'eng-mix', text: '混合（' + [...set].map(b => SCHEME_ZH[b] || b).join('/') + '）'};
+}
+function paperSchemeBadge(ans){
+  const p = paperScheme(ans);
+  return `<span class="eng ${p.cls}" title="识别方案口径">${esc(p.text)}</span>`;
+}
+// 保存人工修正（改答案）。target 带 sid 或 rid。返回合并后的生效答案（字符串键）。
+async function applyFix(target, fixes){
+  const r = await postj('/api/fix', Object.assign({}, target, {fixes}));
+  if (r.error){ toast(r.error); return null; }
+  return r.answers || {};
+}
+// 工作台里逐题改答案
+async function onFixAnswer(e){
+  if (!GEDIT) return;
+  const q = e.target.dataset.q;
+  const val = e.target.value.trim().toUpperCase().replace(/[^A-Z]/g, '');
+  if (!val){ e.target.value = ((GEDIT.stu.answers || {})[String(q)] || {}).answer || ''; toast('答案只能是 A–Z'); return; }
+  const r = await applyFix({sid: GEDIT.sid}, {[q]: val});
+  if (!r){ e.target.value = ((GEDIT.stu.answers || {})[String(q)] || {}).answer || ''; return; }
+  GEDIT.stu.answers = Object.assign({}, GEDIT.stu.answers, r);   // 让判定/预览立刻跟着变
+  e.target.classList.add('fixed');
+  toast('已记人工修正：第 ' + q + ' 题 → ' + val);
+  updateGbPreview();
+  loadGradebook().catch(() => {});
+}
+// 工作台里改卷面考号
+async function onFixSid(e){
+  if (!GEDIT) return;
+  const nv = e.target.value.trim();
+  if (!nv || nv === GEDIT.sid){ e.target.value = GEDIT.sid; return; }
+  if (!confirm(`把考号从 ${GEDIT.sid} 改成 ${nv}？\n若新考号已存在会被拒绝。`)){ e.target.value = GEDIT.sid; return; }
+  const r = await postj('/api/fix/sid', {sid: GEDIT.sid, newSid: nv});
+  if (r.error){ toast(r.error); e.target.value = GEDIT.sid; return; }
+  toast('考号已改为 ' + nv);
+  GEDIT.sid = nv;
+  await loadGradebook();
+}
+// 渲染「识别方案与误判率」面板
+async function openEngine(){
+  const r = await apijson('/api/engine-accuracy');
+  const rows = r.rows || [];
+  if (!rows.length){
+    $('#engBody').innerHTML = '<div class="empty">还没有人工修正记录 —— 去工作台改几道题就有了</div>';
+    $('#engModal').classList.add('on');
+    return;
+  }
+  const body = `<table><thead><tr><th>识别方案</th><th class="num">定音题数</th>
+      <th class="num">被改题数</th><th class="num">修正率</th></tr></thead><tbody>
+    ${rows.map(x => `<tr>
+      <td>${esc(x.engineZh || x.engine)}</td>
+      <td class="num">${x.decided}</td>
+      <td class="num">${x.corrected}</td>
+      <td class="num">${x.rate == null ? '—' : x.rate + '%'}</td></tr>`).join('')}
+    </tbody></table>
+    ${(r.confusions || []).length ? '<h4 style="font-size:12px;margin:12px 0 4px">混淆明细（机器读成 → 改成）</h4><div class="hint">'
+      + (r.confusions || []).map(c => esc(c.key) + ' ×' + c.count).join('　') + '</div>' : ''}
+    ${r.caveat ? '<div class="warns" style="margin-top:12px"><div>⚠️ ' + esc(r.caveat) + '</div></div>' : ''}`;
+  $('#engBody').innerHTML = body;
+  $('#engModal').classList.add('on');
+}
+$('#btnEng').onclick = () => openEngine().catch(e => toast(String(e)));
+$('#engClose').onclick = () => $('#engModal').classList.remove('on');
+$('#engModal').addEventListener('click', e => { if (e.target.id === 'engModal') $('#engModal').classList.remove('on'); });
+// 单张扫描结果里逐题改答案（事件委托，renderResults 每次重画都生效）
+$('#results').addEventListener('change', async e => {
+  const inp = e.target.closest('input.fixin[data-rid]'); if (!inp) return;
+  if (!canWrite()) return;
+  const rid = inp.dataset.rid, q = inp.dataset.q;
+  const val = inp.value.trim().toUpperCase().replace(/[^A-Z]/g, '');
+  if (!val){ inp.value = inp.dataset.last || '—'; return; }
+  inp.dataset.last = val;
+  const r = await applyFix({rid}, {[q]: val});
+  if (!r) return;
+  inp.classList.add('fixed');
+  toast('已记人工修正：第 ' + q + ' 题 → ' + val);
+});
 
 // ============================================================ 启动
 refreshSel();

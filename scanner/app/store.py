@@ -16,7 +16,7 @@ import sqlite3
 import threading
 from datetime import datetime, timedelta
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # 表结构 v1。全部 JSON 大字段（template / roster / answers / data）都按「哑存储」处理：
 # 识别器以后多几个字段不用改表结构 —— 这也是把整个学生字典塞进 data 一列的原因。
@@ -97,7 +97,22 @@ def _migrate_to_v2(conn):
     cols = [r['name'] for r in conn.execute('PRAGMA table_info(exams)').fetchall()]
     if 'rules' not in cols:
         conn.execute('ALTER TABLE exams ADD COLUMN rules TEXT')
-MIGRATIONS = [(2, _migrate_to_v2)]
+
+
+def _migrate_to_v3(conn):
+    """v3：加 exam_scans.fixes —— 单张扫描的人工修正表。
+
+    批量那条件走 exam_students.data（整条 JSON 落库，加字段不用改表），
+    但单张扫描是**一列一字段**的表，新字段必须显式 ALTER。
+    不加列的话写入会直接报 "no such column" —— 那是好事（响亮地失败）；
+    真正的危险是有人为了绕开报错把 fixes 塞进别的列，那才会静默串味。
+    """
+    cols = [r['name'] for r in conn.execute('PRAGMA table_info(exam_scans)').fetchall()]
+    if 'fixes' not in cols:
+        conn.execute('ALTER TABLE exam_scans ADD COLUMN fixes TEXT')
+
+
+MIGRATIONS = [(2, _migrate_to_v2), (3, _migrate_to_v3)]
 
 
 class StoreError(Exception):
@@ -173,7 +188,11 @@ def _qmap_in(raw):
 
 
 # 学生字典里「键是题号」的字段名。加新的同类型字段必须往这里加。
-_QKEYED = ('answers',)
+#
+# fixes 必须在这里 —— 人工修正表也是「题号作键」。漏了它的后果正是上面警告的那种：
+# 存进去 {"1": "B"}、读回来键还是字符串，而内存里答案是 int 键 → apply() 一题都匹配不上，
+# **修正全部静默失效**（界面看着改了、刷新就回原样，且没有任何报错）。
+_QKEYED = ('answers', 'fixes')
 
 
 def _fix_qkeys(d, dump):
@@ -472,18 +491,38 @@ class Store:
                    (kind, _dumps(list(ids or [])), now(), exam_id))
 
     # ---------------------------------------------------------- 学生（批量结果）
-    def save_students(self, exam_id, students):
-        """整批替换。一个事务里做完 —— 中途失败不会留下「删了一半」的考试。"""
+    def save_students(self, exam_id, students, keep_manual=False):
+        """整批替换。一个事务里做完 —— 中途失败不会留下「删了一半」的考试。
+
+        keep_manual=True 时，先把库里已有的 `grading`（人工复核）与 `fixes`（人工修正）
+        按考号搬回到新数据上。**批量重传必须开这个** —— 否则老师重新上传一次扫描件，
+        之前逐题改的答案和复核标记会被整批替换静默清空：界面刷新一下才发现在，
+        而且没有任何提示。识别结果是新算的，但人工劳动不是。
+
+        注意只有 sid 对得上的才搬得过去。考号本身被改过、或这次识别换了考号，
+        就对不上了 —— 这时**宁可丢掉也不要猜**（猜错等于把甲的修正记到乙头上）。
+        """
+        carry = {}
+        if keep_manual:
+            for row in self._all('SELECT sid, data FROM exam_students WHERE exam_id=?',
+                                 (exam_id,)):
+                d = _fix_qkeys(_loads(row['data'], {}) or {}, False)
+                keep = {k: d[k] for k in ('grading', 'fixes') if d.get(k)}
+                if keep:
+                    carry[str(row['sid'])] = keep
         with self._lock:
             try:
                 self.conn.execute('BEGIN')
                 self.conn.execute('DELETE FROM exam_students WHERE exam_id=?', (exam_id,))
                 for i, s in enumerate(students):
+                    rec = _fix_qkeys(s, True)
+                    for k, v in (carry.get(str(s.get('sid'))) or {}).items():
+                        rec.setdefault(k, v)
                     self.conn.execute(
                         'INSERT INTO exam_students(exam_id, sid, seq, name, cls, data) '
                         'VALUES (?,?,?,?,?,?)',
                         (exam_id, str(s.get('sid')), i, s.get('name') or '',
-                         s.get('cls') or '', _dumps(_fix_qkeys(s, True))))
+                         s.get('cls') or '', _dumps(rec)))
                 self.conn.execute('UPDATE exams SET updated_at=? WHERE id=?', (now(), exam_id))
                 self.conn.commit()
             except Exception:
@@ -529,6 +568,66 @@ class Store:
                 raise
         return d
 
+    def set_student_fixes(self, exam_id, sid, fixes):
+        """写某个考生的人工修正表（改机器读错的答案）。
+
+        和 set_student_grading 并列但**语义不同**：grading 改「判分结论」，
+        这里改「答案本身」。两者都只动自己那个键，互不干扰。
+        """
+        row = self._one('SELECT data FROM exam_students WHERE exam_id=? AND sid=?',
+                        (exam_id, str(sid)))
+        if not row:
+            raise StoreError('没有这个考生：' + str(sid))
+        d = _fix_qkeys(_loads(row['data'], {}) or {}, False)
+        d['fixes'] = fixes or {}
+        with self._lock:
+            try:
+                self.conn.execute('BEGIN')
+                self.conn.execute(
+                    'UPDATE exam_students SET data=? WHERE exam_id=? AND sid=?',
+                    (_dumps(_fix_qkeys(d, True)), exam_id, str(sid)))
+                self.conn.execute('UPDATE exams SET updated_at=? WHERE id=?', (now(), exam_id))
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+        return d
+
+    def set_student_sid(self, exam_id, old_sid, new_sid):
+        """改某个考生的考号（卷面考号读错时用）。
+
+        主键是 (exam_id, sid)，改考号等于搬一行 —— 不能直接 UPDATE，得先读出来再
+        用新 sid 写回、删掉旧行。新 sid 已经存在时**拒绝**（否则会把两个人合并成一个，
+        而且丢了谁都不知道）。
+        """
+        old_sid, new_sid = str(old_sid), str(new_sid)
+        if not new_sid.strip():
+            raise StoreError('新考号不能为空')
+        if old_sid == new_sid:
+            return
+        row = self._one('SELECT data FROM exam_students WHERE exam_id=? AND sid=?',
+                        (exam_id, old_sid))
+        if not row:
+            raise StoreError('没有这个考生：' + old_sid)
+        dup = self._one('SELECT sid FROM exam_students WHERE exam_id=? AND sid=?',
+                        (exam_id, new_sid))
+        if dup:
+            raise StoreError(f'考号 {new_sid} 已经有一份卷子了 —— 请先处理那份，'
+                             f'不然两个人的答案会混在一起')
+        d = _fix_qkeys(_loads(row['data'], {}) or {}, False)
+        d['sid'] = new_sid
+        with self._lock:
+            try:
+                self.conn.execute('BEGIN')
+                self.conn.execute('UPDATE exam_students SET sid=?, data=? '
+                                  'WHERE exam_id=? AND sid=?',
+                                  (new_sid, _dumps(_fix_qkeys(d, True)), exam_id, old_sid))
+                self.conn.execute('UPDATE exams SET updated_at=? WHERE id=?', (now(), exam_id))
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+
     # ---------------------------------------------------------- 单张扫描结果
     def add_scans(self, exam_id, items):
         """items: [(rid, name, answers, sid, stu, cls, source)]"""
@@ -563,6 +662,32 @@ class Store:
             marks = ','.join('?' * len(rids))
             rows = self._all(f'SELECT * FROM exam_scans WHERE exam_id=? AND rid IN ({marks}) '
                              f'ORDER BY seq, rid', (exam_id, *rids))
-        return [{'id': r['rid'], 'name': r['name'], 'answers': _load_answers(r['answers']),
-                 'sid': r['sid'], 'stu': r['stu'], 'cls': r['cls'], 'source': r['source']}
-                for r in rows]
+        out = []
+        for r in rows:
+            keys = r.keys()
+            out.append({'id': r['rid'], 'name': r['name'],
+                        'answers': _load_answers(r['answers']),
+                        # 老库（v2）没有这一列 —— 用 keys() 判一下而不是硬取，
+                        # 免得升级过程中读到半新半旧的库时炸掉整页。
+                        'fixes': _load_answers(r['fixes']) if 'fixes' in keys else {},
+                        'sid': r['sid'], 'stu': r['stu'], 'cls': r['cls'],
+                        'source': r['source']})
+        return out
+
+    def set_scan_fixes(self, exam_id, rid, fixes):
+        """写单张扫描的人工修正。只动 fixes 一列，识别出来的 answers 原样保留。"""
+        row = self._one('SELECT rid FROM exam_scans WHERE exam_id=? AND rid=?',
+                        (exam_id, str(rid)))
+        if not row:
+            raise StoreError('没有这张扫描件：' + str(rid))
+        self._exec('UPDATE exam_scans SET fixes=? WHERE exam_id=? AND rid=?',
+                   (_dump_answers(fixes), exam_id, str(rid)))
+
+    def set_scan_sid(self, exam_id, rid, sid):
+        """改单张扫描的卷面考号（机器读错考号时用）。"""
+        row = self._one('SELECT rid FROM exam_scans WHERE exam_id=? AND rid=?',
+                        (exam_id, str(rid)))
+        if not row:
+            raise StoreError('没有这张扫描件：' + str(rid))
+        self._exec('UPDATE exam_scans SET sid=? WHERE exam_id=? AND rid=?',
+                   (str(sid), exam_id, str(rid)))

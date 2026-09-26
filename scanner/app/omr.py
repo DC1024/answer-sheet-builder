@@ -14,6 +14,27 @@ from . import hwletter
 FORMAT = 'asb-omr/2'
 FORMAT_READABLE = ('asb-omr/1', 'asb-omr/2')
 
+# ---------------------------------------------------------------- 识别方案标识
+#
+# 两套方案并存，老师需要知道**这一份卷子到底是哪套读出来的**（才能对比误判率）：
+#   rule  结构特征规则（hwletter.py + 墨迹相对基线判定），纯 OpenCV，零模型
+#   cnn   CNN + 结构规则交叉验证（cnn_letter.py，需 torch + hwletter_cnn.pt）
+#
+# 注意二者不是「二选一」：CNN 只作用于**手写作答题**（q.write）；
+# 选择题填涂圈（q.options）无论装不装 CNN 都走 `rule` —— 所以一份卷子完全可以
+# 是「选择题用 rule、手写题用 cnn」的混合体，engine 里把逐题口径也一并给出。
+ENGINE_RULE = 'rule'
+ENGINE_CNN = 'cnn'
+ENGINE_ZH = {
+    ENGINE_RULE: '结构特征规则（纯 OpenCV）',
+    ENGINE_CNN: 'CNN + 结构规则交叉验证',
+}
+# 逐题来源（比 engine 更细：同一份卷子里选择题和手写题本来就不是同一套）
+BY_ZH = {
+    'rule': '结构规则',
+    'cnn': 'CNN',
+}
+
 # 采样框相对填涂圈方框的收缩比例（避开印刷的方括号边框）
 SHRINK = 0.60
 
@@ -334,6 +355,10 @@ def decode_write(warp, questions, px_per_mm, faint_ink=0.15, cnn_model=None):
       best   = CNN 置信度（无 CNN 时为 OpenCV 评分差）
       second = OpenCV 置信度（无 CNN 时为 0）
     额外回吐 cnn={letter,conf,ocLetter,ocConf} 供前端复核页并排展示两路意见。
+
+    逐题来源标注（老师要据此判断「哪套方案误判更少」，所以必须逐题给）：
+      by    'rule' 结构规则定音 / 'cnn' CNN 定音 / 'both' 两路都不可信 / None 未进入分类
+      votes {cnn:{letter,conf}, rule:{letter,conf}} —— 两路各自的意见，缺哪路就没哪个键
     """
     norm, thr = _prep(warp)
     out = []
@@ -368,18 +393,25 @@ def decode_write(warp, questions, px_per_mm, faint_ink=0.15, cnn_model=None):
                        'ratios': {}, 'inks': {}, 'blobs': meta.get('blobs', 1),
                        'features': r['features'], 'x': wb.get('x'), 'y': wb.get('y'),
                        'w': wb.get('w'), 'h': wb.get('h')}
+            # 这一题是谁定的音 + 两路意见（前端并排展示用）：
+            # 纯 OpenCV 模式下 rule 是唯一一路，CNN 那格留空（而不是编个假值）。
+            row['by'] = ENGINE_RULE
+            row['votes'] = {'rule': {'letter': row['answer'], 'conf': row['best']}}
             out.append(row)
             continue
 
         # ---- CNN 一选 + OpenCV 交叉验证 ----
         glyph, meta = hwletter.extract_glyph(box)
         if glyph is None:
-            # 没提成形字形：和老路径一样判 multi/blank（无 CNN 介入）
+            # 没提成形字形：和老路径一样判 multi/blank（无 CNN 介入）。
+            # by=None：这一步根本没进入任何分类器，不该记成某一套方案的功劳（或锅）。
             flag = 'multi' if meta.get('multi') else 'blank'
             row = {'no': q['no'], 'answer': None, 'flag': flag,
                    'best': 0.0, 'second': 0.0, 'ratios': {}, 'inks': {},
                    'blobs': meta.get('blobs', 0), 'x': wb.get('x'), 'y': wb.get('y'),
                    'w': wb.get('w'), 'h': wb.get('h')}
+            row['by'] = None
+            row['votes'] = {}
             out.append(row)
             continue
 
@@ -411,6 +443,11 @@ def decode_write(warp, questions, px_per_mm, faint_ink=0.15, cnn_model=None):
                'cnn': {'letter': cnn_lbl, 'conf': round(cnn_conf, 3),
                        'ocLetter': oc_letter, 'ocConf': round(oc_conf, 3)},
                'x': wb.get('x'), 'y': wb.get('y'), 'w': wb.get('w'), 'h': wb.get('h')}
+        # 这一题的「定音者」：CNN 够自信就是 CNN（rule 只作交叉验证）；
+        # CNN 不够自信时两路都不足采信 → by='both'，明确告诉老师「这题别信任何一路」。
+        row['by'] = ENGINE_CNN if cnn_conf >= cnn_letter.CNN_THRESH else 'both'
+        row['votes'] = {'cnn': {'letter': cnn_lbl, 'conf': round(cnn_conf, 3)},
+                        'rule': {'letter': oc_letter, 'conf': round(oc_conf, 3)}}
         out.append(row)
     return out
 
@@ -469,6 +506,36 @@ def draw_overlay(warp, sampled, results, px_per_mm, scale=1.0, sid=None, writes=
     return img
 
 
+def engine_report(results):
+    """把逐题 `by` 汇总成「这份卷子用的是哪套方案」。
+
+    返回 {'engine', 'engineZh', 'byCount', 'hasWrite'}：
+      engine   'rule' | 'cnn' | 'mixed' —— 整卷口径（给用户看的那一个词）
+      byCount  {题目来源: 题数}，如 {'rule': 8, 'cnn': 2}
+      hasWrite 这份模板里到底有没有手写作答题（决定 CNN 有没有机会上场）
+
+    为什么不定成「二选一」：CNN **只作用于手写作答题**，选择题填涂圈永远走结构规则。
+    所以一份「选择题 + 手写题」的卷子，正确答案本来就是「两个方案都在用」——
+    硬塞一个单值会误导人。mixed 才是诚实的结果。
+    """
+    counts = {}
+    for r in results or []:
+        b = r.get('by')
+        if b:
+            counts[b] = counts.get(b, 0) + 1
+    has_write = any(r.get('by') is not None for r in results or [])
+    if not counts:
+        engine = ENGINE_RULE                  # 没有可归因的题（全空/全 multi）→ 按主线口径
+    elif len(counts) == 1:
+        k = next(iter(counts))
+        engine = ENGINE_CNN if k == ENGINE_CNN else ('both' if k == 'both' else ENGINE_RULE)
+    else:
+        engine = 'mixed'
+    zh = {'rule': ENGINE_ZH[ENGINE_RULE], 'cnn': ENGINE_ZH[ENGINE_CNN],
+          'both': '两路均未定音（需人工判）', 'mixed': '混合（选择题走结构规则，手写题走 CNN）'}[engine]
+    return {'engine': engine, 'engineZh': zh, 'byCount': counts, 'hasWrite': has_write}
+
+
 def recognize(image_bgr, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, gap=0.15,
                overlay=True, cnn_model=None):
     """完整识别流程：定位 → 矫正 → 采样 → 判定（含考号填涂区）
@@ -482,13 +549,19 @@ def recognize(image_bgr, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, gap=0.15,
     page = tpl['pages'][real_idx]
     sampled = sample_bubbles(warp, page, px)
     results = decide(sampled, fill_min=fill_min, gap=gap)
-    # 手写作答题（q.write，无 options）走结构分类，不占涂卡判定链路
+    # 选择题（填涂圈）永远是结构规则 + 墨迹基线判定 —— 逐题标上来源，
+    # 否则前端没法把「选择题必然 rule」和「手写题可能 cnn」区分开。
+    for r in results:
+        r['by'] = ENGINE_RULE
+        r['votes'] = {'rule': {'letter': r.get('answer'), 'conf': r.get('best')}}
+    # 手写作答题（q.write，无 options）走结构分类 / CNN，不占涂卡判定链路
     wqs = [q for q in page.get('questions', []) if q.get('write') and not q.get('options')]
     writes = decode_write(warp, wqs, px, cnn_model=cnn_model) if wqs else []
     if writes:
         results = sorted(results + writes, key=lambda r: str(r['no']))
     sid = decode_sid(warp, page, px, fill_min=fill_min)
-    out = {'page': real_idx, 'questions': results, 'diag': diag, 'pxPerMm': px, 'sid': sid}
+    out = {'page': real_idx, 'questions': results, 'diag': diag, 'pxPerMm': px, 'sid': sid,
+           'engine': engine_report(results)}
     if overlay:
         ov = draw_overlay(warp, sampled, results, px,
                           scale=min(1.0, 1400.0 / warp.shape[1]), sid=sid, writes=writes)

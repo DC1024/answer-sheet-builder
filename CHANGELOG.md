@@ -7,6 +7,20 @@ All notable changes to this project are documented here.
 
 _（暂无）_
 
+## [1.1.0] - 2026-09-26
+
+### Added / 新增
+- **扫描端：人工修正（改机器读错的答案）**。阅卷工作台逐题复核里，每题直接改答案（机器原读标红显示），改完即落库，并**穿透进判分、班级分布统计、CSV 导出、成绩单**；原机器读数（`machine`）始终保留，供误判率统计使用。卷面考号也能改（`/api/fix/sid`），机器读错考号 = 整份卷子归错人，改完即时生效。重传扫描件时人工修正按考号搬回（`save_students(keep_manual)`），不会白改。
+  **Scanner: manual correction of machine misreads.** In the gradebook review modal each question's answer is directly editable (the machine's original read is shown in red); a correction is persisted and propagates into scoring, class distribution stats, CSV export and the score sheet, while the original machine reading (`machine`) is always retained for misjudgment-rate accounting. The scanned candidate number is also editable (`/api/fix/sid`); a misread ID misattributes the whole paper and the fix applies immediately. Re-uploading scans carries corrections back by ID (`save_students(keep_manual)`), so manual work is never lost.
+- **扫描端：识别方案标识 + 按方案误判率**。每道题标注用的是哪套识别方案 —— **结构特征规则**（纯 OpenCV，选择题填涂圈判定，零模型）还是 **CNN**（手写 A–D 交叉验证，装好 torch 权重后启用），一份卷子两套都用时显示「混合」。④汇总统计新增「识别方案与误判率」面板，按方案统计「被老师亲手改掉的比例」（`engine_accuracy`），并**原样展示有偏样本提醒**（只有老师看过并动手改的题才进统计，不等于全量准确率）。批量接口 / 单张扫描 / health 都带上 `engine` 口径与逐题 `by`。
+  **Scanner: recognition-scheme label + per-scheme misjudgment rate.** Every question is tagged with the scheme that read it — **structural-rule** (pure OpenCV bubble detection, zero model) or **CNN** (handwritten A–D cross-check, enabled once torch weights are present); a paper using both shows "mixed". A new "识别方案与误判率" panel in ④ stats reports, per scheme, the share of questions the teacher manually corrected (`engine_accuracy`), and shows the biased-sample caveat verbatim (only questions the teacher actually reviewed enter the count, so it is not full accuracy). The batch / single-scan / health endpoints all carry the `engine` verdict and per-question `by`.
+- 新增离线测试 `scanner/tests/test_fixes.py`：钉死人工修正的规整 / 生效 / 落库 / 穿透统计与导出、重传不丢、考号改名拒绝、只读账号权限，以及按方案误判率的分桶（rule / cnn / both / 无来源）与有偏样本口径。
+  New offline suite `scanner/tests/test_fixes.py` locks in manual-correction normalization, application, persistence, propagation into stats/export, keep-on-rescan, sid-rename rejection, viewer permissions, and per-scheme misjudgment-rate bucketing (rule / cnn / both / unknown) with the biased-sample semantics.
+
+### Changed / 变更
+- 库结构升级到 `SCHEMA_VERSION = 3`：学生表新增 `fixes`（按题号存的人工修正，JSON 键统一成 int 避免静默失效）、`fixedQnos`（已修正题号清单）、`machine_*` 原读字段。
+  Schema bumped to `SCHEMA_VERSION = 3`: students gain `fixes` (per-question manual corrections, JSON keys normalized to int to avoid silent mismatch), `fixedQnos` (corrected question list) and `machine_*` original-read fields.
+
 ## [1.0.3] - 2026-09-26
 
 ### Added / 新增

@@ -374,6 +374,11 @@ def merge_answers(pages):
     """把一份卷子多页的逐题结果合并成一套答案。
 
     返回 (answers, conflicts)：answers = {题号: {answer, flag, ...}}
+
+    ⚠️ 这里必须把 `by` / `votes` 一起带过来。它们标着「这一题是哪套方案读的」——
+    漏了它们不会报错、界面也照样显示答案，但 `/api/engine-accuracy` 的分母会全空，
+    老师就永远比不出「结构规则」和「CNN」哪套更准（这正是本次要解决的问题）。
+    白名单式的复制很容易漏字段，所以宁可显式列全。
     """
     answers, conflicts = {}, []
     for pg in pages:
@@ -383,7 +388,9 @@ def merge_answers(pages):
                 conflicts.append(no)
             answers[no] = {'answer': q.get('answer'), 'flag': q.get('flag'),
                            'best': q.get('best'), 'second': q.get('second'),
-                           'ratios': q.get('ratios'), 'inks': q.get('inks')}
+                           'ratios': q.get('ratios'), 'inks': q.get('inks'),
+                           'by': q.get('by'), 'votes': q.get('votes') or {},
+                           'cnn': q.get('cnn')}
     answers = {k: answers[k] for k in sorted(answers)}
     return answers, sorted(set(conflicts))
 

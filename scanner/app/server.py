@@ -34,6 +34,7 @@ from . import store as store_mod
 from . import auth as auth_mod
 from . import settings as settings_mod
 from . import update as upd
+from . import fixes as fixes_mod
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 # 数据目录（库 + 校对图）。容器里默认落到 /srv/data（compose 的 bind mount）；
@@ -131,6 +132,10 @@ def _recognize_bytes(data, name, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, g
 
     单张扫描和批量上传都走这里 —— 免得两条路各修一次、还修得不一样。
     cnn_model: 手写 A-D CNN（传 None 则 decode_write 退化为纯 OpenCV）。
+
+    结果里带 `engine`（这份卷子用的哪套方案：rule / cnn / mixed）+ 每题 `by`
+    （这一题谁定的音），answers 里也各存一份 —— 老师要据此对比两套方案的误判率，
+    所以「方案」必须跟着结果一起落库，不能只活在前端的一次响应里。
     """
     try:
         img = _decode(data)
@@ -140,7 +145,8 @@ def _recognize_bytes(data, name, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, g
         png = r.pop('overlayPng', None)
         saved = _save_overlay(rid, png) if png else False
         answers = {q['no']: {'answer': q['answer'], 'flag': q['flag'], 'best': q['best'],
-                             'second': q['second'], 'ratios': q['ratios'], 'inks': q['inks']}
+                             'second': q['second'], 'ratios': q['ratios'], 'inks': q['inks'],
+                             'by': q.get('by'), 'votes': q.get('votes') or {}}
                    for q in r['questions']}
         if r.get('sid'):
             # 逐位坐标（x/y/w/h）是给 draw_overlay 用的，没必要发给浏览器
@@ -262,16 +268,38 @@ def _label(stu):
     return txt or (stu.get('source') or '未命名')
 
 
-def _student_sheet(stu):
-    """学生记录 → 统计/导出要的「一份卷子」。现场算，不缓存 —— 补录改名立刻生效。"""
+def _student_sheet(stu, applied=False):
+    """学生记录 → 统计/导出要的「一份卷子」。现场算，不缓存 —— 补录改名立刻生效。
+
+    applied=False（默认）时 answers 是**人工修正之后**的生效答案 —— 统计、判分、
+    导出要的都该是这个，否则老师改完答案分数不变（这一条踩过：改完答案刷新回来还是
+    原分，因为下游还在读机器原读数）。
+    需要「机器原读」的场合（误判率统计）传 applied=True，拿未经合并的那份。
+    """
+    fixes = stu.get('fixes') or {}
+    answers = stu.get('answers') or {}
+    if not applied and fixes:
+        answers, _ = fixes_mod.apply(answers, fixes)
     return {'id': 'stu-' + str(stu.get('sid')), 'name': _label(stu),
-            'answers': stu.get('answers') or {}, 'sid': str(stu.get('sid')),
+            'answers': answers, 'sid': str(stu.get('sid')),
             'stu': stu.get('name') or '', 'cls': stu.get('cls') or '',
-            'source': stu.get('source') or ''}
+            'source': stu.get('source') or '',
+            # 原始机器读数一直带着 —— 误判率统计要「机器读到啥 vs 老师改成啥」的配对，
+            # 只在需要时（exam_accuracy）取用，平时不参与判分。
+            'machineAnswers': stu.get('answers') or {},
+            'fixes': fixes}
 
 
-def _sheets(exam, ids=None):
-    """取结果集。默认只取这个考试「最近一次识别」那一批。"""
+def _sheets(exam, ids=None, applied=True):
+    """取结果集。默认只取这个考试「最近一次识别」那一批。
+
+    applied=True（默认）→ answers 是人工修正后**生效**的答案。
+    applied=False → 保留机器原读（误判率统计用）。
+
+    ⚠️ `_student_sheet` 的 `applied` 语义正好相反（它 False=合并、True=原读），
+    所以传过去要取反。早期这里直接透传 `applied`，导致 stats/export 走默认
+    applied=True 时读到的还是机器原读 —— 老师改完答案，统计和导出却不变。
+    """
     if ids is None:
         ids = list(exam['activeIds'] or [])
     if not ids:
@@ -281,10 +309,31 @@ def _sheets(exam, ids=None):
     want_scan = [str(i) for i in ids if not str(i).startswith('stu-')]
     found = {}
     for s in STORE.students(exam['id'], sids=want_stu):
-        found['stu-' + str(s['sid'])] = _student_sheet(s)
+        found['stu-' + str(s['sid'])] = _student_sheet(s, applied=not applied)
     for s in STORE.scans(exam['id'], rids=want_scan):
+        if applied and s.get('fixes'):
+            s = dict(s)
+            s['machineAnswers'] = s.get('answers') or {}
+            s['answers'], _ = fixes_mod.apply(s.get('answers') or {}, s['fixes'])
         found[s['id']] = s
     return [found[i] for i in ids if i in found]          # 保持 ids 的顺序
+
+
+# 发给浏览器的每题字段。`ratios` / `inks` 是 matplotlib 之外的 numpy 标量，
+# 直接 jsonify 也可能出问题（虽然大多能过），所以统一走白名单，顺带剪掉体积。
+_ANS_FIELDS = ('answer', 'flag', 'by', 'best', 'second', 'machine', 'machineFlag',
+               'machineBy', 'fixNote', 'fixBy', 'fixAt', 'votes', 'cnn')
+
+
+def _ans_view(a):
+    """一条答案 → 前端要的瘦身版（只留白名单字段，numpy 标量转 Python 标量）。"""
+    if not isinstance(a, dict):
+        return {'answer': None, 'flag': None}
+    out = {}
+    for k in _ANS_FIELDS:
+        if k in a:
+            out[k] = a[k]
+    return out
 
 
 def _qnos(exam, sheets):
@@ -352,21 +401,43 @@ def _match(exam, overrides, save=False):
     students = STORE.students(exam['id'])
     students, warnings = bt.match(students, exam['roster'], overrides)
     if save:
-        STORE.save_students(exam['id'], students)
+        # keep_manual：重新套名单只是改姓名/班级标注，绝不能顺手清掉逐题修正与复核标记
+        STORE.save_students(exam['id'], students, keep_manual=True)
         STORE.set_overrides(exam['id'], overrides)
     return students, warnings
 
 
-def _students_view(exam):
+def _students_view(exam, applied=True):
     """当前考试的学生视图。
 
     读的时候**现场重套一次名单**，而不是返回库里存着的 name/cls ——
     刚改完名单、或另一个人补录了一个名字，这里是立刻可见的，
     也不会出现「库里存的 matched 标记跟名单对不上」这种陈旧数据。
+
+    applied=True（默认）时再叠一层**人工修正**：answers 变成老师改过之后的生效答案。
+    下游的判分 / 成绩分析 / 导出全都读这个视图，所以改一次答案就处处生效。
+
+    ⚠️ 合并只发生在**返回的这份拷贝**上，绝不回写 —— 写回会把 `answers` 里的
+    机器原读覆盖掉，而误判率统计正是靠「机器原读 vs 人工修正」的配对算出来的。
+    写库的路径（_match(save=True)）用的是未合并的 students。
     """
     if not STORE.students(exam['id']):
         return [], []
-    return _match(exam, exam['overrides'])
+    students, warnings = _match(exam, exam['overrides'])
+    if not applied:
+        return students, warnings
+    out = []
+    for s in students:
+        fixes = s.get('fixes') or {}
+        if not fixes:
+            out.append(s)
+            continue
+        s = dict(s)
+        s['machineAnswers'] = s.get('answers') or {}
+        s['answers'], changed = fixes_mod.apply(s.get('answers') or {}, fixes)
+        s['fixedQnos'] = sorted(changed)
+        out.append(s)
+    return out, warnings
 
 
 # ---------------------------------------------------------------- 鉴权闸门
@@ -417,10 +488,28 @@ def health():
 
     带 `cnn` 是为了让**打包产物自己**证明手写 CNN 装进去了没有 —— 权重和 torch 都是
     可选件，服务无论如何都能起来，所以「起得来」不等于「装对了」。
+
+    `engine` 是「本服务当前**实际生效**的识别方案」，与 `cnn.ready` 的区别在于：
+    ready 只说「装了没有」，engine 说「跑的时候会不会真的用上」。两者不一致
+    （如被 ASB_CNN_MODEL 指到空路径）时，engine 才是老师该看的那一个。
     """
+    cnn = _cnn_status()
     return jsonify({'ok': True, 'needSetup': AUTH.need_setup(),
                     'schema': STORE.schema_version(), 'version': APP_VERSION,
-                    'cnn': _cnn_status()})
+                    'cnn': cnn, 'engine': _engine_status(cnn)})
+
+
+def _engine_status(cnn=None):
+    """当前生效的识别方案（给界面显示 + 老师对比误判率时对齐口径）。"""
+    cnn = cnn or _cnn_status()
+    return {
+        'write': omr.ENGINE_CNN if cnn['ready'] else omr.ENGINE_RULE,
+        'writeZh': omr.ENGINE_ZH[omr.ENGINE_CNN if cnn['ready'] else omr.ENGINE_RULE],
+        'choice': omr.ENGINE_RULE,
+        'choiceZh': omr.ENGINE_ZH[omr.ENGINE_RULE],
+        'cnnNote': (None if cnn['ready'] else
+                    '手写 A-D 走结构特征规则；装好 torch 与权重后会自动升级为 CNN 交叉验证'),
+    }
 
 
 # ---------------------------------------------------------------- 设置 / 检查更新
@@ -643,6 +732,37 @@ def get_template():
 
 # ---------------------------------------------------------------- 路由：识别
 
+def _batch_engine(students):
+    """整批结果的方案汇总：把每个学生的逐题 `by` 归并成一个口径。
+
+    一份班里可能有一部分学生的手写题走了 CNN、选择题走结构规则 —— 所以给的是
+    **逐题计数**（byCount），不是一个笼统的「全班用了 X」。
+    """
+    counts = {}
+    for s in students or []:
+        for q in (s.get('pages') or []):
+            for item in (q.get('questions') or []):
+                b = item.get('by')
+                if b:
+                    counts[b] = counts.get(b, 0) + 1
+    if not counts:
+        return {'engine': omr.ENGINE_RULE, 'byCount': {},
+                'engineZh': omr.ENGINE_ZH[omr.ENGINE_RULE]}
+    keys = set(counts)
+    if keys == {omr.ENGINE_CNN}:
+        eng = omr.ENGINE_CNN
+    elif keys == {omr.ENGINE_RULE}:
+        eng = omr.ENGINE_RULE
+    elif keys == {'both'}:
+        eng = 'both'
+    else:
+        eng = 'mixed'
+    zh = {'rule': omr.ENGINE_ZH[omr.ENGINE_RULE], 'cnn': omr.ENGINE_ZH[omr.ENGINE_CNN],
+          'both': '两路均未定音（需人工判）',
+          'mixed': '混合（选择题走结构规则，手写题走 CNN）'}[eng]
+    return {'engine': eng, 'engineZh': zh, 'byCount': counts}
+
+
 @app.post('/api/scan')
 @AUTH.require(*auth_mod.CAN_WRITE)
 def scan():
@@ -743,8 +863,9 @@ def batch_api():
                                f'这套模板有 {len(tpl["pages"])} 面，'
                                f'请在文件名里写明（如 正面/反面 或 _1/_2）后再传一次')
 
-    # 批量是「一个班一次」的操作：整批替换（含之前试扫的散图），避免两批混算
-    STORE.save_students(exam['id'], students)
+    # 批量是「一个班一次」的操作：整批替换（含之前试扫的散图），避免两批混算。
+    # keep_manual：把已有人工复核 / 人工修正按考号搬回来 —— 重传扫描件不该毁掉人工劳动。
+    STORE.save_students(exam['id'], students, keep_manual=True)
     STORE.clear_scans(exam['id'])
     STORE.set_overrides(exam['id'], overrides)
     STORE.set_active(exam['id'], 'batch',
@@ -753,6 +874,7 @@ def batch_api():
     return jsonify({'students': students, 'warnings': warnings,
                     'roster': _roster_info(STORE.exam(exam['id'])),
                     'exam': _exam_view(STORE.exam(exam['id'])),
+                    'engine': _batch_engine(students),
                     'stats': {'images': len(images), 'students': len(students), 'zips': zips}})
 
 
@@ -836,6 +958,92 @@ def grade():
     return jsonify({'ok': True, 'sid': sid, 'grading': grading})
 
 
+# ---------------------------------------------------------------- 路由：人工修正
+#
+# 与「复核（grading）」的区别：复核改的是**判分结论**，这里改的是**答案本身**。
+# 机器把 B 读成 C，就该用这里改成 B —— 分布统计、导出、误判率都会跟着对。
+# 两者的落库路径完全一样（都是考生/扫描记录里的一个键），所以刷新/重启都不丢。
+
+@app.post('/api/fix')
+@AUTH.require(*auth_mod.CAN_WRITE)
+def set_fixes():
+    """保存某个考生（或某张扫描件）的人工修正表。
+
+    body: {'sid': '20260101', 'fixes': {'3': 'B', '7': {'answer': 'AC', 'note': '…'}}}
+          {'rid': '<扫描 id>', 'fixes': {...}}
+    fixes 为 {} 表示「清空这个人所有修正」（回到机器原读）。
+    """
+    exam = _exam()
+    body = request.get_json(silent=True) or {}
+    who = (g.user or {}).get('username') or ''
+    try:
+        fxs = fixes_mod.normalize_all(body.get('fixes'), who=who)
+    except fixes_mod.FixError as e:
+        return _err(str(e))
+
+    sid = str(body.get('sid') or '').strip()
+    rid = str(body.get('rid') or '').strip()
+    if not sid and not rid:
+        return _err('没给考号（sid）或扫描件 id（rid）')
+    try:
+        if rid:
+            STORE.set_scan_fixes(exam['id'], rid, fxs)
+        else:
+            STORE.set_student_fixes(exam['id'], sid, fxs)
+    except store_mod.StoreError as e:
+        return _err(str(e), 404)
+
+    # 回吐合并后的生效答案 —— 前端拿到就能直接刷新那一行，不用再拉整页。
+    if rid:
+        row = next((s for s in STORE.scans(exam['id'], [rid])), None)
+        answers = fixes_mod.apply((row or {}).get('answers') or {}, fxs)[0] if row else {}
+    else:
+        stu = STORE.students(exam['id'], [sid])
+        answers = fixes_mod.apply((stu[0].get('answers') if stu else {}) or {}, fxs)[0]
+    return jsonify({'ok': True, 'sid': sid or None, 'rid': rid or None,
+                    'fixes': {str(k): v for k, v in fxs.items()},
+                    'answers': {str(k): v for k, v in answers.items()}})
+
+
+@app.post('/api/fix/sid')
+@AUTH.require(*auth_mod.CAN_WRITE)
+def fix_sid():
+    """改正卷面考号。机器读错考号 = 整份卷子归错人，必须能改。"""
+    exam = _exam()
+    body = request.get_json(silent=True) or {}
+    sid = str(body.get('sid') or '').strip()
+    new_sid = str(body.get('newSid') or '').strip()
+    rid = str(body.get('rid') or '').strip()
+    if not new_sid:
+        return _err('没给新考号')
+    if len(new_sid) > 40:
+        return _err('考号过长（上限 40 字符）')
+    try:
+        if rid:
+            STORE.set_scan_sid(exam['id'], rid, new_sid)
+        else:
+            # 批量那条路：考号是主键的一部分，改名等于搬一行
+            STORE.set_student_sid(exam['id'], sid, new_sid)
+    except store_mod.StoreError as e:
+        return _err(str(e), 404)
+    return jsonify({'ok': True, 'sid': new_sid, 'oldSid': sid or None, 'rid': rid or None})
+
+
+@app.get('/api/engine-accuracy')
+def engine_accuracy():
+    """按识别方案统计「老师改掉的比例」—— 用来判断哪套方案误判更少。
+
+    只看出现过的题号（_qnos），并且用**机器原读**的 answers 做分母，
+    免得被人工修正后的答案污染统计。
+    """
+    exam = _exam(create=False)
+    if not exam:
+        return jsonify({'rows': [], 'corrected': 0, 'decided': 0, 'rate': None,
+                        'confusions': [], 'caveat': ''})
+    sheets = _sheets(exam, applied=False)
+    return jsonify(fixes_mod.engine_accuracy(sheets, qnos=set(_qnos(exam, sheets))))
+
+
 @app.get('/api/gradebook')
 def gradebook():
     """阅卷工作台的数据：每个考生的自动分、复核后分、逐题对错、复核标记。"""
@@ -860,6 +1068,11 @@ def gradebook():
             'correct': {str(k): v.get('auto') for k, v in per_q.items()},
             'per_q': {str(k): v for k, v in per_q.items()},
             'effective': final,
+            # 逐题「生效答案 + 机器原读 + 方案来源」，前端逐题核对/改答案全靠它：
+            #   answer / flag / by        —— 生效值（有修正就是修正后的）
+            #   machine / machineFlag / machineBy / fixNote —— 机器当时读到什么
+            'answers': {str(k): _ans_view(v) for k, v in ans.items()},
+            'fixedQnos': s.get('fixedQnos') or [],
         })
     graded = sum(1 for r in rows if r['grading'])
     review = sum(1 for r in rows if r['grading'].get('review'))
