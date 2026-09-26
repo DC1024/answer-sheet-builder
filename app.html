@@ -42,6 +42,7 @@
     <button id="btn-import">⬆ 导入 JSON</button>
     <button id="btn-omr" title="导出供扫描识别服务使用的阅卷模板（含每个填涂圈的 mm 坐标）">🎯 阅卷模板</button>
     <button id="btn-reset">♻ 重置</button>
+    <button id="btn-settings" title="设置 / 检查更新">⚙ 设置</button>
     <input type="file" id="file-import" accept="application/json" hidden>
   </div>
 </header>
@@ -79,6 +80,36 @@
     </section>
   </aside>
 </main>
+
+<!-- 设置 / 检查更新。制卡端没有后端：偏好存 localStorage，更新检查直接问 GitHub。 -->
+<div id="setModal" hidden>
+  <div class="setbox">
+    <div class="sethd">
+      <h3>⚙ 设置</h3>
+      <button id="setClose">关闭</button>
+    </div>
+
+    <div class="setrow">
+      <label><input type="checkbox" id="setAutoUpd"> 自动检查更新</label>
+      <span class="hint">打开页面时查一次，6 小时内不重复查</span>
+    </div>
+
+    <div class="setrow">
+      <button id="setCheck" class="primary">检查更新</button>
+      <span class="hint">当前版本 <b id="setVer">—</b></span>
+      <span class="hint" id="setInfo"></span>
+    </div>
+
+    <div id="setResult" hidden></div>
+
+    <p class="setnote">
+      制卡端是纯前端工具：这套设置只存在这台电脑的浏览器里，更新检查直接访问 GitHub。
+      内网或离线时查不到属正常，可手动打开
+      <a id="setReleases" href="#" target="_blank" rel="noreferrer">项目发行版页面</a>。
+      Windows 免安装版每次启动都会打印本机地址，双击 exe 即用。
+    </p>
+  </div>
+</div>
 
 <script type="module" src="assets/js/app.js"></script>
 </body>

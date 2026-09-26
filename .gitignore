@@ -11,9 +11,29 @@ npm-debug.log*
 # deps (项目本身无依赖，预留)
 node_modules/
 
+# Python 字节码（scanner/.gitignore 也有一份，这里兜住仓库其它位置）
+__pycache__/
+*.py[cod]
+
 # 本地临时文件
 *.tmp
 _rendertest.mjs
 
 # UI 走查输出 / 探针截图
+_ui_out/
 scanner/_ui_out/
+
+# Windows 免安装版打包产物（build.ps1 生成，不进库）
+packaging/windows/build/
+packaging/windows/dist/
+# 构建时挪到一边的旧产物（删除被环境拒绝时的兜底，见 build.ps1）
+packaging/windows/*-stale-*/
+# 打包脚本用的临时探针文件
+packaging/windows/_*.txt
+_build_*.log
+_build_*.md
+_build_exit.txt
+_psparse.txt
+_procs.txt
+_clean.txt
+_smoke*.log

@@ -1,4 +1,8 @@
 * text=auto eol=lf
+# Windows PowerShell：老版本对 LF 脚本不够稳，且带中文的脚本必须 CRLF+BOM 才不乱码
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
 *.png binary
 *.jpg binary
 *.jpeg binary
@@ -7,3 +11,9 @@
 *.pdf binary
 *.woff binary
 *.woff2 binary
+# PyTorch 权重 / 打包产物：千万别让 git 当成文本做行尾转换
+*.pt binary
+*.pth binary
+*.zip binary
+*.exe binary
+*.dll binary

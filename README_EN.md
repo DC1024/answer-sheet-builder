@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.2"><img alt="version" src="https://img.shields.io/badge/version-1.0.2-blue"></a>
+  <a href="https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.3"><img alt="version" src="https://img.shields.io/badge/version-1.0.3-blue"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="no backend" src="https://img.shields.io/badge/backend-none-success">
   <a href="https://github.com/DC1024/answer-sheet-builder/actions/workflows/docker.yml"><img alt="docker build" src="https://github.com/DC1024/answer-sheet-builder/actions/workflows/docker.yml/badge.svg"></a>
@@ -46,6 +46,29 @@ your machine — everything runs in the browser. Package it as a Docker image to
 | 🖨 **Print / export PDF** | Print directly from the browser or save as PDF; supports **duplex (long-edge flip)**. |
 
 ## Quick Start
+
+### Option 0 — Windows portable (no Python, no Docker, no internet)
+
+Grab both zips from [Releases](https://github.com/DC1024/answer-sheet-builder/releases), unzip, double-click:
+
+| Download | Run this | Notes |
+| --- | --- | --- |
+| `...-cardmaker-windows-x64.zip` | `答题卡制作器.exe` | Sheet builder. Spins up a loopback-only static server and opens your browser (the page is an ES module, so `file://` would be blank) |
+| `...-scanner-windows-x64.zip` | `答题卡扫描服务.exe` | Scanner. Serves on <http://127.0.0.1:8081>; **the first visit asks you to create an admin account** |
+
+```bat
+答题卡制作器.exe --port 8899                    :: pick a port (default: any free one)
+答题卡扫描服务.exe --port 8081 --data D:\asb     :: where the database and overlays live
+答题卡扫描服务.exe --no-cnn                     :: disable the handwriting CNN to save RAM
+```
+
+Data defaults to `%LOCALAPPDATA%\asb-scanner\data` (copying that folder is a full backup). Each zip ships a
+`使用说明.txt`. If antivirus flags the exe, allow it — false positives on PyInstaller one-file bundles are common.
+
+Both ends have a **settings panel** (⚙ in the builder's toolbar, card ⑧ in the scanner) where you can
+**toggle the automatic update check**, **check manually** and **see the version**. A blocked network shows
+"could not check" with a reason rather than an error — an intranet that cannot reach GitHub is normal, not a
+failure. Point `ASB_UPDATE_API` at a mirror or your own fork to change where it looks.
 
 ### Option 1 — Docker (recommended)
 

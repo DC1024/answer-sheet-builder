@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.2"><img alt="version" src="https://img.shields.io/badge/version-1.0.2-blue"></a>
+  <a href="https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.3"><img alt="version" src="https://img.shields.io/badge/version-1.0.3-blue"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="no backend" src="https://img.shields.io/badge/backend-none-success">
   <a href="https://github.com/DC1024/answer-sheet-builder/actions/workflows/docker.yml"><img alt="docker build" src="https://github.com/DC1024/answer-sheet-builder/actions/workflows/docker.yml/badge.svg"></a>
@@ -58,7 +58,31 @@
 
 ## 快速开始
 
-### 方式一：Docker（推荐）
+### 方式零：Windows 免安装版（学校机房 / 不想装环境，推荐）
+
+到 [Releases](https://github.com/DC1024/answer-sheet-builder/releases) 下载两个 zip，解压、双击 exe 即可，
+**不需要装 Python、不需要 Docker、不需要联网**：
+
+| 下载 | 双击这个 | 说明 |
+| --- | --- | --- |
+| `...-cardmaker-windows-x64.zip`（约 9 MB） | `答题卡制作器.exe` | 制卡端。会自动起一个只监听 `127.0.0.1` 的本地服务并打开浏览器（页面是 ES Module，`file://` 下打不开） |
+| `...-scanner-windows-x64.zip`（约 210 MB） | `答题卡扫描服务.exe` | 扫描端。默认 <http://127.0.0.1:8081>，**首次打开会让你创建管理员账号** |
+
+> 扫描端这个包为什么大：里面带了**CPU 版 PyTorch**（单一个 `torch_cpu.dll` 就 290 MB）来跑手写
+> A-D 的 CNN（真实手写净准确率 75.5% → 94.3%）。只做填涂识别、不需要手写的话，加 `--no-cnn` 启动
+> 能省内存（包体积不变，因为 DLL 已经在里面了）。想进一步瘦身得上 ONNX Runtime 换个推理后端，
+> 那是另一件事。
+
+```bat
+答题卡制作器.exe --port 8899          :: 指定端口（默认自动挑一个空闲端口）
+答题卡扫描服务.exe --port 8081 --data D:\asb   :: 数据和校对图放哪儿
+答题卡扫描服务.exe --no-cnn           :: 关掉手写 CNN，省内存（纯 OpenCV 照常跑）
+```
+
+默认数据目录 `%LOCALAPPDATA%\asb-scanner\data`（拷走整个文件夹就是完整备份）。
+每个 zip 里都有一份 `使用说明.txt`。杀毒软件/首次运行若拦截，放行即可 —— PyInstaller 单文件包被误报是常态。
+
+### 方式一：Docker（推荐给服务器部署）
 
 ```bash
 # 1) 构建镜像
@@ -143,6 +167,11 @@ docker run -d --name asb -p 8080:80 ghcr.io/dc1024/answer-sheet-builder:latest
 
 > 前提：卷子里要有**填涂圈模式**的选择题，或开启**考号填涂区**（两者至少其一）；
 > 全是手写作答模式时会提示「没有可识别的填涂圈」。
+
+**设置与检查更新**：制卡端工具栏的 `⚙ 设置`、扫描端的 `⑧ 设置` 卡片里，可以**开关自动检查更新**、
+**手动点一下「检查更新」**、看当前版本号。学校内网连不上 GitHub 是常态，所以这种时候只会显示
+「暂时查不到」并说明原因 —— **不算错误、不弹红**。换源 / 内网镜像 / fork 出去自己发版，
+用 `ASB_UPDATE_API` 指一下即可。
 
 ## 目录结构（模块化）
 

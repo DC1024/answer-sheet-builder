@@ -5,7 +5,21 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+_（暂无）_
+
+## [1.0.3] - 2026-09-26
+
 ### Added / 新增
+- **Windows 免安装版：制卡端 + 扫描端**。Release 里多了两个 zip —— `答题卡制作器`（制卡端）与 `答题卡扫描服务`（扫描端），解压后双击 exe 就用，**不需要装 Python、不需要 Docker**，数据库和校对图落在 `%LOCALAPPDATA%\asb-scanner\data`。
+  制卡端是纯静态站点，脚本用 ES Module 组织，而浏览器**不允许在 `file://` 下加载模块**（双击 `app.html` 只会白屏）——所以启动器自带一个只监听 `127.0.0.1` 的本地静态服务并自动打开浏览器。扫描端则是把 Flask + OpenCV（+ 可选的手写 CNN）打成 onedir，启动器在 **import 之前**先把数据目录钉死（否则冻结成 exe 后 `__file__` 落在 PyInstaller 的临时解包目录，等于每次启动都清空），再用 waitress 起服务；端口被占用会自动往后找。
+  **Windows portable builds for both ends.** The release now ships two zips — the sheet builder and the scanner — that run by double-clicking an exe, **no Python and no Docker required**, with the database and proof overlays under `%LOCALAPPDATA%\asb-scanner\data`. The builder is a static ES-module site, and browsers refuse to load modules over `file://` (double-clicking the html just gives a blank page), so its launcher bundles a loopback-only static server and opens the browser. The scanner is packaged as an onedir app; the launcher pins the data directory **before** importing the app (a frozen `__file__` points into PyInstaller's temp extraction dir, so the default would wipe state on every start) and serves through waitress, walking to the next port when 8081 is taken.
+- **Windows 编译发布流水线**。新增 `.github/workflows/release-windows.yml`：推 `v*` 标签即在 `windows-latest` 上编译两个产物并**自动挂到对应的 GitHub Release**（也可手动触发，只出 Artifact 不发 Release）。打包逻辑全部落在仓库里的 `packaging/windows/build.ps1`（本地与 CI 同一套，PS 5.1 与 pwsh 7 都能跑），后面跟着 `ci_smoke.ps1` 把两个 exe **真起一遍**再验接口 —— PyInstaller 最常见的失败不是「打不出来」而是「打出来了但一跑就崩」（漏 hiddenimport / 漏数据文件），这一关专治它。
+  **Windows build & release pipeline.** A new workflow builds both artifacts on `windows-latest` on `v*` tags and attaches them to the GitHub Release (manual runs only produce Artifacts). All packaging logic lives in `packaging/windows/build.ps1` so local and CI build identically, followed by `ci_smoke.ps1` which actually launches both exes and probes their HTTP endpoints — the classic PyInstaller failure is not "it won't build" but "it built and dies on launch" (missing hiddenimport / missing data file), which is exactly what this step catches.
+- **手写 A-D 接入 CNN 分类器**。新增 `app/cnn_letter.py`（SmallCNN：4 层卷积 + 2 层全连接，输入 48×48 二值字形）与训练好的权重 `app/hwletter_cnn.pt`（9.7 MB，249 张真实学生手写样本，验证集 100%、全量复测 99.2%）。识别链路里 `decode_write` 改为 **CNN 一选 + OpenCV 交叉验证**：两者一致且 CNN 置信 ≥ 0.70 → 直接判；不一致 → 标 `review`；CNN 置信不足 → 按原逻辑标 `doubt`，都进「存疑」队列交给老师。真实手写整卷净准确率 **75.5% → 94.3%**，其中置信判定部分 99.4%（163/164）。torch 是**惰性 import**，没有 torch 或没有权重时整条手写识别优雅退回纯 OpenCV，服务照常启动、绝不因加载失败而崩。
+  **CNN first-pass classifier for handwritten A–D.** New `app/cnn_letter.py` (a small CNN over 48×48 binary glyphs) with trained weights `app/hwletter_cnn.pt` (9.7 MB; 249 real student handwriting samples — 100% on the held-out split, 99.2% on a full re-test). `decode_write` now runs **CNN as the primary classifier with OpenCV as a cross-check**: agreement above 0.70 confidence is accepted outright, disagreement is flagged `review`, low confidence is flagged `doubt` — both land in the teacher's review queue. Net accuracy on real handwritten sheets went **75.5% → 94.3%**, 99.4% (163/164) on the auto-decided subset. torch is imported lazily, so a deployment without torch or without the weights degrades cleanly to pure OpenCV instead of failing to boot.
+- 扫描端新增环境变量 `ASB_DATA`（数据目录，容器里仍是 `/srv/data`）与 `ASB_CNN_MODEL`（权重路径；指到一个不存在的路径即可显式关掉 CNN、省内存），新增 `app/hwletter_cnn.pt` 随镜像走。
+  New scanner env vars: `ASB_DATA` (data dir) and `ASB_CNN_MODEL` (+ the weights now ship inside the image).
+
 - **扫描服务：真实手写精度基准工具** `tools/bench_real_handwrite.py`。拿一批真实学生手写扫描件 + 对应阅卷模板 + 真值答案，跑出可复现的精度结论：净准确率、**混淆矩阵**（一眼看出哪个字母在往哪个字母上塌）、flag 分布，以及**「自动阅卷精度 vs 人工复核量」权衡曲线**（调 `DOUBT_CONF` 的依据）。支持 `--fail-under` 卡阈值用于 CI。改动手写识别后换任意一批手写卷都能复跑 —— 印刷体基准测不出真实笔迹上的洞收不拢口 / 断笔 / 框线问题。
   **Scanner: real-handwriting accuracy benchmark** (`tools/bench_real_handwrite.py`) — point it at a folder of real scanned sheets plus their template and ground truth to get a reproducible accuracy report: net accuracy, a **confusion matrix** (shows at a glance which letter is collapsing into which), flag distribution, and an **auto-grading accuracy vs. manual-review load** trade-off curve for tuning `DOUBT_CONF`. `--fail-under` turns it into a CI gate. Re-runnable on any new batch of handwriting — printed-fixture benchmarks cannot catch unclosed loops, pen lifts or box frames.
 - **扫描服务：手写字母结构分类（半自动）**。`app/hwletter.py` 纯 OpenCV 特征分类手写/印刷 **A/B/C/D**：连通域提字形 → 洞数量/位置 + 轮廓顶底宽打分，大小写同收。模板题目加可选 `write` 作答框（`x/y/w/h` mm）即启用，识别时对该题走结构分类，新增 `flag: doubt/multi`（置信不足或双字母 → 进复核）。设计原则「宁可存疑、不可硬猜」。基准：real30 印刷体 900 样本 100% 识别 0 误判；合成工整手写整卷给出答案全对、不确定进复核。真实手写精度待真实笔迹素材。
@@ -99,13 +113,106 @@ All notable changes to this project are documented here.
   (`bt.match()` mutates the student dict in place and preserves arbitrary top-level keys). Pinned in
   `test_store.py` §K and `test_service.py` §M.
 
+- **两端的「设置」页 + 检查更新**。制卡端工具栏右上角多了 `⚙ 设置`，扫描端多了 `⑧ 设置` 卡片，都做三件事：
+  **自动检查更新可开可关**（默认开、6 小时内不重复查）、**可以手动点一下「检查更新」**（`?force=1` 绕过缓存）、
+  **显示当前版本号**（来自服务端 / 版本模块的真身，不是前端写死的）。三种结局都说人话：
+  🎉 有新版本（新版本号 + 可点的发行版地址 + 发行说明正文）/ 已是最新（附「3 小时前查的」）/
+  **暂时查不到**（连不上 GitHub / 仓库还没发过 Release / 被限流，各给一句中文说明）。
+  最要紧的一条设计是**「查不到」不是错误**：学校内网连不上 `api.github.com` 是常态，所以失败也当成一种
+  **结果**返回（`ok:false` + `error`），**永不抛异常、永不 500**，前端也不弹红、不写 `console.error` ——
+  否则内网部署第一天就会被一堆假警报淹没。
+  两端查法不同：制卡端是**纯静态站点、没有后端**，直接浏览器 `fetch` 打 `api.github.com`
+  （它带 `Access-Control-Allow-Origin: *`，跨域读得到）；扫描端由**服务端** `GET /api/update` 去查，
+  结果落盘 `data/settings.json` 并按 6 小时缓存（**只缓存成功结果** —— 失败不缓存，下次打开还会再试）。
+  开关也落在**服务端**而不是 `localStorage`：老师换台电脑打开，「这个服务要不要自动查」应该是同一个答案。
+  只有**写权限**能改开关（只读账号开关是灰的，但版本号与「检查更新」照常可用，那只是查询）；
+  写盘走临时文件 + `os.replace()`，断电不会留半个坏文件，文件被删/写坏则回落默认值。
+  换源 / 内网镜像 / fork 出去自己发版，用 `ASB_UPDATE_API` 指一下即可，前端一行不用改。
+  **Settings page + update check on both ends.** The builder's toolbar gained a `⚙ 设置` button and the
+  scanner a `⑧ 设置` card; both let users **toggle the automatic check**, **trigger a manual one** (bypassing the
+  cache) and **see the running version**. All three outcomes are spelled out: new version (number + clickable
+  release link + notes) / already latest / **could not check** (offline, no releases yet, rate-limited — each
+  with a human sentence). The governing rule is that **"cannot check" is not an error**: a school intranet
+  can't reach `api.github.com` and that is normal, so failures come back as a *result* (`ok:false` + `error`),
+  never raise, never 500, and the UI explains instead of going red. The two ends check differently — the
+  builder is a **static site with no backend**, so the browser fetches `api.github.com` directly (it sends
+  `Access-Control-Allow-Origin: *`); the scanner checks **server-side** via `GET /api/update`, caching the
+  outcome in `data/settings.json` for 6 hours (**successes only**). The switch lives server-side rather than in
+  `localStorage`, so it follows the service, not one machine. Only writers can flip it (viewers see it greyed
+  out but can still check), writes go through a temp file + `os.replace()`, and a corrupt file falls back to
+  defaults. `ASB_UPDATE_API` repoints the check at a mirror or fork.
+- **打包产物自身的回归守卫**：`packaging/windows/ci_smoke.ps1` 把两个 exe **真起一遍**再打接口
+  （制卡端验 `assets/js/app.js` 与 `style.css` 真的被供出来了、扫描端验 `/api/health` 的 `ok`、首页体积、
+  `asb.db` 真的建出来了），并顺手 grep 启动日志里的「手写 CNN 已加载 / 加载失败」把它写进 CI 摘要 ——
+  免安装版最容易出的问题不是「打不出来」而是「打出来了、双击就崩」，这一关专治它。
+  前端侧另有两份无头 Chromium 回归：`dev/verify_settings.cjs`（制卡端，用 `ctx.route` 拦 GitHub 造三种剧本）
+  与 `dev/verify_scanner_settings.cjs`（扫描端，起一个**假 GitHub API** 并把真服务用 `ASB_UPDATE_API` 指过去，
+  走完整链路：前端 → `/api/update` → `app/update.py` → HTTP → 解析 → 落盘 → 回读）。
+  **A regression guard for the artifacts themselves** — `ci_smoke.ps1` launches both exes and probes them
+  (builder: `assets/js/app.js` and `style.css` actually served; scanner: `/api/health` `ok`, index size,
+  `asb.db` created), grepping the launch log for the CNN load line into the CI summary. Plus two headless-Chromium
+  suites: `dev/verify_settings.cjs` (builder, stubbing GitHub via `ctx.route`) and
+  `dev/verify_scanner_settings.cjs` (scanner, with a **fake GitHub API** wired in through `ASB_UPDATE_API`,
+  exercising the full chain).
+
 ### Changed / 变更
+- **`/api/health` 新增 `cnn` 字段**：`{weights, torch, ready}` —— 手写 CNN 到底装进去没有。
+  只做静态判断（权重文件在不在 + `torch` 能不能 `find_spec` 到），**不加载模型**（健康检查每几十秒
+  被打一次，加载一次要 1~2 秒）。加这个是因为权重和 torch 都是可选件、缺了服务照样起得来，
+  于是「服务活着」并不能证明「打包时装对了」—— 免安装版的冒烟测试就靠它与产物里的
+  `hwletter_cnn.pt` 对账，对不上直接判打包失败。
+  **`/api/health` now reports `cnn: {weights, torch, ready}`** — a cheap static check (weights present +
+  `find_spec('torch')`) that does **not** load the model, since the health endpoint is polled every few
+  seconds. Both pieces are optional and the service boots without them, so "it's alive" never proved
+  "it was packaged correctly"; the portable smoke test now cross-checks this against the shipped
+  `hwletter_cnn.pt` and fails the build on a mismatch.
 - **扫描服务数据结构从「内存 STATE」迁到 SQLite**：所有接口改按 `exam_id` 读写；`/api/template` 现在需要登录
   （上传模板走写权限）。前端新增考试下拉、账号/角色 UI、`⑤ 账号管理`卡片（仅管理员可见）。
   **Scanner: in-memory STATE → SQLite; `/api/template` now requires login;** the UI gained an exam switcher,
   account/role management and an admin-only account card.
 
 ### Fixed / 修复
+- **`test_real30.py` 不再写死张数**。31–60 这批手写版素材加进 `fixtures/real30/` 之后，
+  `assert len(files) == 30` 就变成了一条**跟识别毫无关系**的假失败（多传几张扫描件必然失败）。
+  现在以 `expected.json`（真值表）为准枚举素材：有真值的卷子必须都在、且全部与真值一致；
+  「有素材、没真值」只提示不判失败 —— 但一定会把张数说出来，免得误以为「60 张全过了」其实只量了 59 张。
+  **`test_real30.py` no longer hard-codes the sheet count.** Adding sheets 31–60 turned
+  `assert len(files) == 30` into a false failure unrelated to recognition. The test now enumerates from
+  `expected.json`: every ground-truthed sheet must be present and match exactly, while sheets still lacking
+  ground truth are reported (never silently ignored) rather than failing the run.
+- **打包脚本的中间目录清理不再可能拖垮一次成功的构建**。PyInstaller 的 `--workpath` 与 zip 的暂存目录
+  改成**每次构建唯一**，于是这两处根本不需要「先删干净」；收尾清理降级为软失败（警告 + 继续）——
+  它只是占点磁盘，绝不该把已经打好的产物判成失败。构建前清 `dist/release` 保持**硬失败**：
+  那里的残留会以「合并」的方式混进产物（先带 CNN 构建、再去掉 CNN 重建，包里会仍然带着上一次的
+  torch DLL，体积对不上、行为也不可预期），这点不能将就。删除被拒时的报错也换成了一句话说明 +
+  该怎么做，而不是一坨看不出原因的 `NativeCommandError`。
+  **Build-script cleanup can no longer fail an otherwise successful build.** PyInstaller's `--workpath`
+  and the zip staging dir are now unique per run, so neither needs pre-cleaning; the finishing cleanup
+  degrades to a warning. Clearing `dist/release` before assembling stays a **hard** failure, since leftovers
+  there merge into the artifact (rebuild without the CNN and the package still carries the previous torch
+  DLLs). A refused delete now reports a plain-language explanation instead of a wall of
+  `NativeCommandError`.
+- **免安装版扫描端：每一个响应都 500**。waitress 的 `ident` 会变成 HTTP 的 `Server:` 响应头，而响应头按
+  latin-1 编码 —— 原本把中文的界面标题传给 `ident`，于是 `build_response_header` 里
+  `UnicodeEncodeError: 'latin-1' codec can't encode ... ordinal not in range(256)`，
+  **连 `/api/health` 都活不了**，表现是「进程在跑、端口在听、浏览器打不开任何页面」。
+  改成 ASCII 的固定标识 `asb-scanner`。这个只在**打包成 exe** 后才显形（源码直跑时用的是另一条启动路径），
+  正是 `ci_smoke.ps1` 把它拦下来的。
+  **Scanner portable build: every response was a 500.** waitress turns `ident` into the `Server:` header, which
+  is latin-1 encoded — passing the Chinese UI title made `build_response_header` raise
+  `UnicodeEncodeError: 'latin-1' codec ... ordinal not in range(256)`, so **even `/api/health` died**: the process
+  was up, the port was listening, and no page would load. Now a fixed ASCII `asb-scanner`. Only visible once
+  packaged (source runs take a different path); `ci_smoke.ps1` caught it.
+- **设置卡片的「检查更新」结果永远不显示**。结果区用内联 `style.display` 控制显隐，而卡片自己有一条
+  `display:flex` 的样式规则 —— 它**盖过**了 UA 的 `[hidden]{display:none}`，于是元素「设了隐藏却还照样显示」；
+  更糟的是脚本读回状态时读的是 `.style.display`，与实际渲染不一致。统一改成 `hidden` **属性** +
+  一条显式的 `#setUpdBox[hidden]{display:none}` 兜底规则。同类坑在制卡端设置弹窗上也补了
+  （`#setModal` 同样设了 `display:flex`），并加了 `@media print` 下强制隐藏。
+  **The settings card's update result never appeared.** It was toggled with inline `style.display` while the
+  card itself carries a `display:flex` rule, which **overrides** the UA's `[hidden]{display:none}` — the element
+  was "hidden" yet still shown, and reading `.style.display` back disagreed with what was rendered. Switched to
+  the `hidden` **property** plus an explicit `#setUpdBox[hidden]{display:none}` fallback, and applied the same
+  fix to the builder's settings modal (also `display:flex`), with a `@media print` override.
 - **手写 A-D 识别：真实笔迹上的精度修复（净准确率 42.9% → 62.9%）**。用 30 份真实学生手写卷（300 题）建基准后，暴露出两个**印刷体基准完全测不出来**的真实笔迹问题：① 作答框的印刷黑框常被断成多段（左竖 / 右竖 / 上下横 / 四角），每段外接矩形只占框宽 5%~9%，不满足原来「占满整框」的判据，于是全被当成手写的墨 —— 主字形旁多出一块第二大团墨直接触发 multi（Q5/Q10 实测 28/30 卷判 multi）。现在按「贴边 + 细长 / 贴边角块」剔除，且只作用于非主连通域，写得满框的大字不会被误删。② 真实手写 A/D 的洞**收不拢口**（起收笔有缝）：54% 的 A、54% 的 D 洞数 = 0，而原打分在无洞时无条件偏向 C，导致 153 个零洞样本 100% 判成 C（其中 98 个真值是 A/B/D）。现在无洞时改用形态判别：中部行带右侧无墨 → C 的右开口；底宽明显大于顶宽 → A 的两腿；右侧墨明显多于左侧 → D 的半圆弧。零洞准确率 36% → 69.3%（5-fold 交叉验证泛化 66.0%）。另外，同一字母被断笔切成上下两段时（次大域与主体包围盒实测重叠 78%）不再误判成「写了两个字母」。
   效果：净准确率 42.9% → 62.9%；**自信给出的答案准确率 79.3%**；D 的识别从 10/63 提升到 31/63。回归：印刷体 real30 仍 300/300 全对；合成形变样本上「自信地给错答案」从 170 个降到 10 个（率 0.236 → 0.014）—— 更守得住「宁可存疑、不可硬猜」。
   **Handwritten A-D recognition: real-ink accuracy fixes (42.9% → 62.9%).** Benchmarking 30 real student sheets (300 answers) exposed two failure modes that printed-fixture benchmarks cannot see: ① the printed frame around a write box usually breaks into several pieces (left/right verticals, top/bottom horizontals, corners), each spanning only 5–9% of the box width, so the old "spans the whole box" filter missed them all and they were counted as ink — the resulting second large blob tripped `multi` on 28/30 sheets for the rightmost questions. Pieces are now dropped when they hug an edge and are thin, or sit in a corner, and only for non-primary blobs so a large letter is never deleted. ② Real A/D loops often fail to close: 54% of A's and 54% of D's reported zero holes, and the scorer then unconditionally favoured C — all 153 zero-hole samples were read as C even though 98 of them were actually A/B/D. Zero-hole cases now fall back on shape: no ink on the mid-band's right side → C's opening; bottom much wider than top → A's splayed legs; right side markedly heavier than left → D's bowl. Zero-hole accuracy 36% → 69.3% (66.0% under 5-fold cross-validation). A letter broken into upper/lower halves by a pen lift is also no longer mistaken for two letters.
@@ -281,6 +388,65 @@ All notable changes to this project are documented here.
 - Docker 部署（`Dockerfile` + `docker-compose.yml`），纯静态无需后端。
   Docker deployment; pure static, no backend.
 
+[Unreleased]: https://github.com/DC1024/answer-sheet-builder/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.3
 [1.0.2]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.2
 [1.0.1]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.1
 [1.0.0]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.0
+
+---
+
+## 发版清单 / Release checklist
+
+> 版本号在**四个地方**各写了一份，没有任何一处是从别处推导出来的 —— **必须同时改，漏一个就会出现
+> 「界面说 1.0.3、接口说 1.0.2」这种自相矛盾**。这是本项目最容易出错的一步，所以单独记在这里。
+
+1. **改版本号（五处，全部要改）**
+
+   | 位置 | 变量 / 内容 | 谁在用 |
+   | --- | --- | --- |
+   | `assets/js/core/version.js` | `APP_VERSION` | 制卡端界面、制卡端的检查更新比对 |
+   | `scanner/app/__init__.py` | `__version__` | 扫描端 `/api/health`、`/api/settings`、检查更新比对 |
+   | `index.html` | 首屏那行 `vX.Y.Z 已发布`（`data-zh` / `data-en` **两处都要改**） | 落地页（GitHub Pages 首屏） |
+   | `README.md` / `README_EN.md` | shields 徽章里的两处 `badge/version-*` | 仓库首页 |
+   | `CHANGELOG.md` | 新开一节 `## [x.y.z] - YYYY-MM-DD` + 底部链接定义 | 更新日志 |
+
+   ```bash
+   # 一个都别漏 —— 不在 CHANGELOG 里的历史版本号都应该消失
+   grep -rn "1\.0\.3" assets/js/core/version.js scanner/app/__init__.py index.html \
+        README.md README_EN.md CHANGELOG.md
+   grep -rn "1\.0\.2" assets/js/core/version.js scanner/app/__init__.py index.html \
+        README.md README_EN.md CHANGELOG.md
+   # → 第一条 6 行（CHANGELOG 里两处：标题 + 链接定义）；第二条只剩 CHANGELOG 的历史
+   ```
+
+2. **跑离线测试**（不需要服务、不需要网络）
+
+   ```bash
+   cd scanner && python tests/test_omr.py && python tests/test_batch.py \
+     && python tests/test_service.py && python tests/test_scoring.py \
+     && python tests/test_store.py && python tests/test_update.py
+   ```
+
+3. **跑前端回归**（无头 Chromium）
+
+   ```bash
+   node dev/verify_settings.cjs            # 制卡端：设置弹窗 + 三种检查更新剧本
+   node dev/verify_scanner_settings.cjs    # 扫描端：真实 Flask + 假 GitHub API
+   ```
+
+4. **本地试打包，确认 exe 真能跑**（不是只看能不能打出来）
+
+   ```powershell
+   pwsh ./packaging/windows/build.ps1 -Version x.y.z
+   pwsh ./packaging/windows/ci_smoke.ps1
+   ```
+
+5. **提交 → 打标签 → 推标签**。推 `v*` 标签会触发 `.github/workflows/release-windows.yml`，
+   在 `windows-latest` 上重跑一遍 build + smoke，然后把两个 zip 挂到对应的 GitHub Release 上；
+   `docker.yml` 同时推镜像。**工作流只做验证与上传，版本号一定来自仓库里的文件** ——
+   所以第 1 步漏改的话，CI 不会拦你，出来的包会带着旧版本号。
+
+6. **发完确认**：Release 页面有两个 zip、镜像标签有了、`/api/health` 里的 `version` 是新号。
+
+> 打标签前记得看一眼 `## [Unreleased]`：里面有内容就先归到新版本那一节，再把它清成 `_（暂无）_`。

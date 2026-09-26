@@ -99,6 +99,13 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 #gbModal.on{display:block;}
 #gbModal .box{background:#fff;border-radius:12px;max-width:780px;margin:0 auto;padding:18px 22px;box-shadow:0 12px 48px rgba(0,0,0,.32);}
 #gbModal .box h3{margin:0;font-size:15px;}
+/* ---- 设置 / 检查更新 ---- */
+.upd{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0;font-size:12.5px;background:#fbfdff;}
+.upd.hit{border-color:#b7e4c7;background:#ebfbee;}
+.upd.miss{border-color:#f5c2c2;background:#fff5f5;color:#8c2f2f;}
+.upd b{color:inherit;}
+.upd pre{margin:8px 0 0;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow:auto;font-size:12px;color:#3d4c5c;background:#fff;border:1px solid var(--line);border-radius:6px;padding:8px;font-family:inherit;}
+.upd a{color:var(--pri);}
 /* ---- 评分规则弹窗 ---- */
 #ruleModal{position:fixed;inset:0;background:rgba(20,24,30,.55);z-index:70;display:none;overflow:auto;padding:30px;}
 #ruleModal.on{display:block;}
@@ -266,6 +273,21 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
       <div id="anDiff"><div class="empty">—</div></div></div>
   </div>
 
+  <div class="card" id="setCard">
+    <h2>⑧ 设置 <span class="tag">本机偏好 · 版本与更新</span></h2>
+    <div class="row">
+      <label class="f"><input type="checkbox" id="setAutoUpd"> 自动检查更新 <span class="hint">（打开界面时查一次，6 小时内不重复查）</span></label>
+      <button id="btnUpd" class="ghost">检查更新</button>
+      <span class="hint">当前版本 <b id="setVer">—</b></span>
+      <span class="hint" id="setUpdInfo"></span>
+    </div>
+    <div id="setUpdBox" class="upd" hidden></div>
+    <div class="row">
+      <span class="hint">数据目录、监听地址、手写 CNN 开关由启动参数决定（Windows 免安装版可用
+        <code>--data</code> / <code>--host</code> / <code>--no-cnn</code>，见安装目录里的「使用说明.txt」）。</span>
+    </div>
+  </div>
+
   <!-- 只有管理员看得见（别人进来这段一直 display:none） -->
   <div class="card" id="userCard" style="display:none">
     <h2>⑤ 账号管理 <span class="tag">管理员可见 · 所有登录用户都能看到所有考试，角色只决定能不能改</span></h2>
@@ -413,6 +435,7 @@ async function boot(){
   // 记着的那个考试可能已经被别人删了 —— 用过期的 id 会直接 404，先核一遍
   const keep = Number(localStorage.getItem(LS_EXAM)) || null;
   await openExam(list.some(e => e.id === keep) ? keep : (list[0] || {}).id || null);
+  loadSettings();               // 不 await：设置/更新检查不该拖慢首屏
 }
 
 async function loadExams(){
@@ -1322,6 +1345,89 @@ function anRenderDiff(rows){
 }
 $('#anGo').onclick = runAnalysis;
 $('#anSeg').onchange = () => { if (AN.rows.length) anRenderSeg(); };
+
+// ============================================================ 设置 / 检查更新
+//
+// 「查不到」不是错误：学校内网连不上 GitHub 是常态，所以后端把失败也当成
+// 一种结果返回，这里只负责把话说清楚，不弹红。
+let SETTINGS = {auto_check_update: true};
+// 兜底值；loadSettings 会用后端返回的 releasesUrl 覆盖（换成 fork / 镜像也就不用改前端）
+let RELEASES_URL = 'https://github.com/DC1024/answer-sheet-builder/releases';
+
+function fmtAgo(ts){
+  const s = Math.max(0, Math.floor(Date.now()/1000 - (Number(ts) || 0)));
+  if (!ts) return '';
+  if (s < 60) return '刚刚';
+  if (s < 3600) return Math.floor(s/60) + ' 分钟前';
+  if (s < 86400) return Math.floor(s/3600) + ' 小时前';
+  return Math.floor(s/86400) + ' 天前';
+}
+
+async function loadSettings(){
+  try {
+    const r = await apijson('/api/settings');
+    SETTINGS = r.settings || SETTINGS;
+    if (r.releasesUrl) RELEASES_URL = r.releasesUrl;
+    $('#setAutoUpd').checked = !!SETTINGS.auto_check_update;
+    $('#setAutoUpd').disabled = !canWrite();
+    $('#setVer').textContent = 'v' + (r.version || '?');
+    if (SETTINGS.auto_check_update) checkUpdate(false);
+  } catch (e) { /* 设置读不到不影响扫描 */ }
+}
+
+// 三种结局都要说清楚：有新版本 / 已是最新 / 查不到（内网很常见）。
+// 统一走 `hidden` 属性而不是 style.display —— 少一种「明明设了却还显示着」的坑。
+function renderUpdate(r, cached){
+  const info = $('#setUpdInfo'), box = $('#setUpdBox');
+  if (!r) { box.hidden = true; info.textContent = ''; return; }
+  if (!r.ok){
+    info.textContent = '';
+    box.hidden = false;
+    box.className = 'upd';
+    box.innerHTML = `<b>暂时查不到新版本</b><br>${esc(r.error || '未知原因')}
+      <br><span class="hint">可以直接访问
+      <a href="${esc(RELEASES_URL)}" target="_blank" rel="noreferrer">项目发行版页面</a> 看看。</span>`;
+    return;
+  }
+  const at = r.checkedAt ? `（${fmtAgo(r.checkedAt)}）` : '';
+  if (r.hasUpdate){
+    info.textContent = '';
+    box.hidden = false;
+    box.className = 'upd hit';
+    box.innerHTML = `🎉 发现新版本 <b>${esc(r.latest)}</b>，当前是 <b>v${esc(r.current)}</b>。
+      <a href="${esc(r.url)}" target="_blank" rel="noreferrer">打开发行版页面 →</a>`
+      + (r.notes ? `<pre>${esc(r.notes)}</pre>` : '');
+  } else {
+    info.textContent = `已是最新版本${cached ? ' · 用缓存' : ''}${at}`;
+    box.hidden = true;
+  }
+}
+
+async function checkUpdate(force){
+  const btn = $('#btnUpd'), info = $('#setUpdInfo'), box = $('#setUpdBox');
+  btn.disabled = true; info.textContent = '正在查询…'; box.hidden = true;
+  try {
+    renderUpdate(await apijson('/api/update' + (force ? '?force=1' : '')), false);
+  } catch (e) {
+    info.textContent = '查询失败：' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$('#btnUpd').onclick = () => checkUpdate(true);
+$('#setAutoUpd').onchange = async e => {
+  const on = e.target.checked;
+  try {
+    const r = await postj('/api/settings', {auto_check_update: on});
+    SETTINGS = r.settings || SETTINGS;
+    toast(on ? '已开启：打开界面时自动检查更新' : '已关闭自动检查更新');
+    if (on) checkUpdate(false);
+  } catch (err) {
+    e.target.checked = !on;      // 存不上就回滚，别让界面撒谎
+    toast('保存失败：' + err.message);
+  }
+};
 
 // ============================================================ 启动
 refreshSel();

@@ -14,8 +14,10 @@
 # 「不再有内存态」这件事不只是持久化，它还顺手解决了一个并发的坑：
 # 两个老师各看各的考试时，同一个 STATE 会被来回覆盖 —— 我这边切个考试，
 # 你那边再点一下统计就会算到我的班上。现在每次请求都从库里按 exam_id 取，串不了。
+import importlib.util
 import json
 import os
+import time
 import uuid
 
 import numpy as np
@@ -23,21 +25,31 @@ import cv2
 from flask import (Flask, jsonify, request, send_from_directory, Response,
                    redirect, g)
 
+from . import __version__ as APP_VERSION
 from . import omr
 from . import batch as bt
 from . import stats as st
 from . import scoring as scor
 from . import store as store_mod
 from . import auth as auth_mod
+from . import settings as settings_mod
+from . import update as upd
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
-DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
+# 数据目录（库 + 校对图）。容器里默认落到 /srv/data（compose 的 bind mount）；
+# 但 Windows 免安装版冻结成 exe 后 `__file__` 在 PyInstaller 的临时解包目录里，
+# 默认值会变成「每次启动都是空的」—— 所以启动器在 import 本模块之前用
+# ASB_DATA 把它指到 %LOCALAPPDATA%\asb-scanner\data。docker 部署不受影响。
+DATA = os.environ.get('ASB_DATA') or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
 os.makedirs(DATA, exist_ok=True)
 
 # 库文件跟着 data/ 走 —— 它是 compose 的 bind mount，容器重建也留得住
 DB_PATH = os.environ.get('ASB_DB') or os.path.join(DATA, 'asb.db')
 STORE = store_mod.Store(DB_PATH)
 AUTH = auth_mod.Auth(STORE)
+# 本机偏好（自动检查更新等），跟库放一起备份
+SETTINGS = settings_mod.Settings(os.path.join(DATA, 'settings.json'))
 
 app = Flask(__name__, static_folder=STATIC, static_url_path='')
 # 一个班 50 人 × 2 面 × 1MB 很容易过 100MB —— 给足余量（反正在内网跑）
@@ -81,12 +93,36 @@ def _get_cnn_model():
     _CNN_TRIED = True
     try:
         from . import cnn_letter
-        _CNN_MODEL = cnn_letter.load_model()
-        app.logger.info('手写 CNN 已加载：hwletter_cnn.pt')
+        # 权重路径可被环境变量顶掉：Windows 免安装版用 ASB_CNN_MODEL 指到
+        # 一个不存在的路径即可显式关掉 CNN（省内存），无需卸载 torch。
+        path = os.environ.get('ASB_CNN_MODEL') or cnn_letter.DEFAULT_MODEL
+        _CNN_MODEL = cnn_letter.load_model(path)
+        app.logger.info('手写 CNN 已加载：%s', path)
     except Exception as e:  # noqa: BLE001 —— 任何失败都退回 OpenCV，不该让请求崩
         _CNN_MODEL = None
         app.logger.warning('手写 CNN 加载失败，退回纯 OpenCV：%s', e)
     return _CNN_MODEL
+
+
+def _cnn_status():
+    """手写 CNN 到底能不能用 —— 只做**静态**判断，不真的加载模型。
+
+    `/api/health` 是 docker 健康检查的目标（每几十秒打一次），而加载一次 torch 要 1~2 秒，
+    所以这里只回答「权重在不在 + torch 找不找得到」，够用且便宜；真正加载仍然只在第一次
+    识别时懒执行（见 `_get_cnn_model`）。
+
+    存在的意义：权重和 torch 都是**可选件**，缺了服务照样起得来 —— 于是「服务活着」
+    并不能证明「打包时把 CNN 装对了」。免安装版就是靠这个字段自证的。
+    """
+    from . import cnn_letter
+    path = os.environ.get('ASB_CNN_MODEL') or cnn_letter.DEFAULT_MODEL
+    try:
+        have_torch = importlib.util.find_spec('torch') is not None
+    except Exception:  # noqa: BLE001 —— 冻结环境里 find_spec 也可能抛
+        have_torch = False
+    have_weights = bool(path) and os.path.isfile(path)
+    return {'weights': have_weights, 'torch': have_torch,
+            'ready': have_weights and have_torch}
 
 
 def _recognize_bytes(data, name, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, gap=0.15,
@@ -377,9 +413,61 @@ def login_page():
 
 @app.get('/api/health')
 def health():
-    """探活 + 初始化状态。docker healthcheck 也打这个（**不能要求登录**）。"""
+    """探活 + 初始化状态。docker healthcheck 也打这个（**不能要求登录**）。
+
+    带 `cnn` 是为了让**打包产物自己**证明手写 CNN 装进去了没有 —— 权重和 torch 都是
+    可选件，服务无论如何都能起来，所以「起得来」不等于「装对了」。
+    """
     return jsonify({'ok': True, 'needSetup': AUTH.need_setup(),
-                    'schema': STORE.schema_version()})
+                    'schema': STORE.schema_version(), 'version': APP_VERSION,
+                    'cnn': _cnn_status()})
+
+
+# ---------------------------------------------------------------- 设置 / 检查更新
+
+@app.get('/api/settings')
+def get_settings():
+    """本机设置 + 版本信息。界面上的「设置」卡片就靠它渲染。"""
+    return jsonify({
+        'ok': True,
+        'version': APP_VERSION,
+        'settings': SETTINGS.get(),
+        'checkInterval': settings_mod.CHECK_INTERVAL,
+        'releasesUrl': upd.RELEASES_URL,
+    })
+
+
+@app.post('/api/settings')
+@AUTH.require(*auth_mod.CAN_WRITE)
+def set_settings():
+    """改本机设置（目前只有「自动检查更新」这一个开关）。"""
+    body = request.get_json(silent=True) or {}
+    try:
+        s = SETTINGS.patch(body)
+    except ValueError as e:
+        return _err(e)
+    return jsonify({'ok': True, 'settings': s})
+
+
+@app.get('/api/update')
+def check_update():
+    """查有没有新版本。`?force=1` 强制重新查，否则 6 小时内直接回缓存。
+
+    不抛异常：连不上 GitHub（内网很常见）时回 `ok:false` + 一句人话，
+    前端显示「暂时查不到」而不是报错。
+    """
+    force = (request.args.get('force') or '').lower() in ('1', 'true', 'yes')
+    cur = SETTINGS.get()
+    cached = cur.get('last_result')
+    fresh = (time.time() - float(cur.get('last_check') or 0)) < settings_mod.CHECK_INTERVAL
+    if not force and isinstance(cached, dict) and cached.get('ok') and fresh:
+        return jsonify(dict(cached, cached=True, checkedAt=int(cur.get('last_check') or 0)))
+
+    res = upd.check(APP_VERSION)
+    if res.get('ok'):
+        # 只缓存成功的查询 —— 断网时的失败结果不该把用户锁在「查不到」里 6 小时
+        SETTINGS.patch({'last_check': int(time.time()), 'last_result': res})
+    return jsonify(dict(res, cached=False, checkedAt=int(time.time()) if res.get('ok') else 0))
 
 
 @app.get('/api/me')

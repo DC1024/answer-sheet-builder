@@ -5,6 +5,7 @@ import { renderPreview } from './core/preview.js';
 import { uid, deepClone, compressImage, mmPx } from './core/util.js';
 import { setAnsTarget, ansTargetFor, clearAnsTarget } from './core/uistate.js';
 import { exportOmrTemplate, omrTemplateFileName } from './core/omr.js';
+import { bindSettings } from './core/settings.js';
 
 let dragId = null;
 let dropTarget = null;
@@ -533,6 +534,7 @@ function init(){
   bindShortcuts();
   bindResizers();
   bindAnswerTarget();
+  bindSettings();                // 工具栏「⚙ 设置」+ 自动检查更新
   fullRender();
   store.subscribe(fullRender);
   window.addEventListener('resize', renderPreviewAndGuides);

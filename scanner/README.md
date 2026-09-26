@@ -21,6 +21,7 @@
 | **名单匹配** | **上传 `考号,姓名,班级` 名单（CSV/TSV，GBK 也认），自动贴上姓名班级、列出待确认项** |
 | 班级统计 | 每题各选项分布 + 正确率；每份卷子得分；一键导出 CSV |
 | **阅卷工作台** | **在识别结果上逐张复核：每题改判对/错/恢复自动、改总分、标「已复核」+备注；工作台汇总复核/待复核/标记/平均分，导出「仅复核过的」用复核分** |
+| **设置 / 检查更新** | **`⑧ 设置` 卡片：自动检查更新可开关、可手动点一次、显示当前版本；查不到不算错误（内网常态）** |
 | Web 界面 | 上传模板 → 拖入扫描件 → 看结果 → 出统计 → 复核，全在浏览器里 |
 
 ---
@@ -66,6 +67,7 @@ python tests/test_scoring.py    # 评分规则引擎：单选分值 / 多选漏�
 python tests/test_store.py      # 持久化层：SQLite 建库 / 迁移 / 读回
 python tests/test_real30.py     # 真实扫描件回归：30 张实际答题卡 × 逆向模板，300 判定点对真值
 python tests/test_hwletter.py   # 手写字母分类：印刷集 900 样本 0 误判 + 整卷手写 e2e
+python tests/test_update.py     # 设置 / 检查更新：版本比较、连不上 GitHub 不抛异常、开关落盘
 
 # 服务级集成：需要先把服务跑起来
 docker compose up -d            # 或 python -m app.server
@@ -91,6 +93,12 @@ BASE=http://192.168.1.10:8081 python tests/e2e_service.py
 `tools/extract_letters.py` 提印刷样本集，改版式时重跑即可）。
 `test_service.py` 把 zip、名单、补录、越界页序这些接线问题在**部署之前**就拦住。
 `e2e_service.py` 则对着真容器走一遍完整业务流（含批量上传），容器里是 opencv 4.9。
+
+> **CNN 装没装，问 `/api/health` 就行**：它返回 `cnn: {weights, torch, ready}` —— 只做静态判断
+> （权重文件在不在 + `torch` 能不能被 `find_spec` 找到），**不加载模型**（健康检查每几十秒被打一次，
+> 加载一次要 1~2 秒）。权重和 torch 都是**可选件**，缺了服务照样起得来，所以「服务活着」并不能证明
+> 「打包时装对了」；免安装版的冒烟测试就是靠这个字段自证的（产物里有 `hwletter_cnn.pt` 却报
+> `weights: false` → 直接判打包失败）。真正加载仍是第一次识别时的懒加载（见 `_get_cnn_model`）。
 
 > 改动识别相关代码后，三份都要跑 —— 尤其 `e2e_service.py`：一个返回 200 的健康探针
 > 只能证明进程活着。
@@ -343,6 +351,9 @@ rel2  = second.ink − base
 | `POST` | `/api/export.csv` | form `key` / `ids` / `graded` → 逐题答案 CSV（有考号时自动补上考号/姓名/班级列）；`graded=1` 时改用**复核分**，表头为 `复核分` |
 | `POST` | `/api/grade` | 保存某考生的复核结论：JSON `{sid, grading}`（`overrides` 题号→对/错、`manualScore`、`review`、`note`）；**写权限**，未知考号报错 |
 | `GET`  | `/api/gradebook` | 阅卷工作台数据：每个考生 `auto/effective/grading/correct`，与汇总 `count/graded/review/avg`；默认网关，**只读也能看** |
+| `GET` | `/api/settings` | 本机设置 + 版本：`version` / `settings` / `checkInterval` / `releasesUrl`。**需要登录，只读也能看** |
+| `POST` | `/api/settings` | 改本机设置（目前只有 `auto_check_update`）：JSON `{auto_check_update: true/false}`。**写权限**，未知键直接报错（白名单） |
+| `GET` | `/api/update` | 查有没有新版本。`?force=1` 强制重查，否则 6 小时内回缓存。**需要登录**，**永不失败** —— 连不上 GitHub 也返回 `200` + `ok:false` + 一句人话 |
 
 > `ids` 的默认值是「最近一次识别的那一批」：先扫 3 张试试、再扫一个班，统计不会把两批混在一起。
 
@@ -564,7 +575,7 @@ answer-sheet-builder/
 
 | 接口 | 作用 |
 | --- | --- |
-| `GET /api/health` | 探活 + 初始化状态（docker 健康检查打这个，不是 `/api/template`） |
+| `GET /api/health` | 探活 + 初始化状态 + **手写 CNN 装没装**（`cnn: {weights, torch, ready}`，只做静态判断、不加载模型）。docker 健康检查打这个，也**不需要登录** |
 | `GET /api/me` | 当前登录身份 / 是否还没初始化 |
 | `POST /api/setup` | 库里一个用户都没有时，创建第一个管理员（之后调用返回 403） |
 | `POST /api/login` | 登录，下发会话 cookie（`asb_sid`，HttpOnly + SameSite=Lax） |
@@ -596,4 +607,58 @@ answer-sheet-builder/
 > 并在 `test_store.py` / `test_service.py` 里钉住「存进去再读回来分还是对的」这条不变量。
 
 环境变量（均可选）：`ASB_DB` 改库路径、`ASB_COOKIE_SECURE=1` 走 HTTPS 时给 cookie 加 `Secure`、
-`PORT` 改监听端口。
+`PORT` 改监听端口、`ASB_UPDATE_API` 改「检查更新」查的地址（见 12.3）。
+
+---
+
+## 12. 设置与检查更新
+
+### 12.1 界面上的「⑧ 设置」
+
+设置卡片做三件事，都在浏览器里，不需要老师去翻日志或命令行：
+
+| 元素 | 行为 |
+| --- | --- |
+| **自动检查更新**（开关） | 默认**开**。打开界面时后台查一次，**6 小时内不重复查**。关掉之后刷新页面也不会再去查 |
+| **检查更新**（按钮） | 手动强制查一次（`?force=1`，绕过缓存）。历史结果里只要「已是最新」就不显示结果框，有新版本才弹出 |
+| **当前版本** | 显示服务端真身版本 `v1.0.3`（来自 `/api/settings`，不是前端写死的） |
+
+三种结局都会把话说清楚，**没有一种是「报错」**：
+
+- 🎉 **有新版本** → 展开结果框，报出新版本号 + 可点的发行版地址 + 发行说明正文；
+- **已是最新** → 只在按钮旁写「已是最新（3 小时前）」；
+- **暂时查不到** → 展开结果框，写明原因（连不上 GitHub / 仓库还没有 Release / 被限流），并给一句
+  「可以直接访问项目发行版页面看看」。
+
+**开关落在服务端的 `data/settings.json`，不是 `localStorage`** —— 每个老师用自己电脑打开，
+开关状态应该跟着「这个服务」走，而不是跟着「这台浏览器」走。写盘用临时文件 + `os.replace()`，
+所以断电/杀进程不会留下半个坏文件；文件被删或被写坏时会**回落到默认值**，不会让服务起不来。
+
+只有**写权限**（管理员 / 老师）能改开关，**只读**账号进来开关是灰的、但版本号和「检查更新」按钮照常能用
+（那只是查询，不改任何东西）。
+
+### 12.2 「查不到」为什么不是错误
+
+学校内网连不上 `api.github.com` 是**常态**，不是异常。所以后端把失败也当成一种**结果**返回：
+
+```jsonc
+// GET /api/update（网络不通时）
+{ "ok": false, "current": "1.0.3", "hasUpdate": false,
+  "error": "连不上 GitHub（URLError）—— 内网/离线环境属正常" }
+```
+
+这条路径**永不抛异常、永不 500**：超时、DNS 失败、证书错、404（仓库还没发过 Release）、403（被限流）
+分别对应一句中文说明。前端也只把它渲染成灰底提示，不弹红、不写 console.error —— 否则内网部署第一天
+就会被一堆假警报淹没。`test_update.py` 用 stub 把这几条分支全钉住了（包括「导入方式」这个坑：
+`update.py` 里必须是 `from urllib.request import urlopen`，否则测试替换不掉真实网络调用、会静默打真 GitHub）。
+
+### 12.3 `ASB_UPDATE_API`：换源 / 调试
+
+```bash
+ASB_UPDATE_API=https://my-mirror.example.com/latest   # 内网镜像
+ASB_UPDATE_API=http://127.0.0.1:9000/latest           # 测试用假 API
+```
+
+默认查 `https://api.github.com/repos/DC1024/answer-sheet-builder/releases/latest`。Fork 出去自己发版的，
+把这个指到自己的仓库即可，前端不用改一行（`releasesUrl` 由 `/api/settings` 一并下发）。
+本项目自己的前端回归 `dev/verify_scanner_settings.cjs` 就是靠它把一个**假 GitHub API** 接到真服务上跑完整链路的。
