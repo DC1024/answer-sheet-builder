@@ -138,8 +138,20 @@ scanner/tests/fixtures/real30/review_31_60.html
 - 涂卡卷（01–30，无 write 框）路径**零影响**：有无 `cnn_model` 答案完全一致（已 smoke 验证）。
 - 既有测试脚本 `test_omr` / `test_hwletter` / `test_scoring` / `test_batch` 全过。
 
-**部署状态**
-- 代码 + 权重已就绪并提交，推到 `main` 后由 `.github/workflows/docker.yml` 的 `scanner` job 重建 GHCR 镜像。
-- 容器启动后首次请求时懒加载权重；加载失败自动退回 OpenCV（日志：`手写 CNN 加载失败，退回纯 OpenCV`）。
-- 线上重建命令（服务器 `192.168.43.18` 上）：`sudo bash tools/deploy_from_ghcr.sh`，数据在 bind mount `/opt/answer-sheet-scanner/data` 持久，重建不丢。
-- 注意：fixtures（含真实学生姓名/手写的扫描件）**不纳入部署提交**，仅 `app/ + requirements/Dockerfile` 进镜像。
+**部署状态（已完成，线上生效）**
+- 提交：`f927f02`（集成 CNN）→ `513b433`（Dockerfile 修 torch/libgomp1），均已推 `main`。
+- GHCR `scanner` 镜像已重建成功；但服务器直连 ghcr.io **blob CDN 不下载（拉取卡死）**，
+  而 manifest 端点通、docker.io 镜像加速器对 ghcr 无效 → 本次改走**热更新**上线：
+  scp `app/` 5 文件 → `docker cp` 进容器 `/srv/app`（旧文件留 `.bak`）→ 容器内
+  `apt install libgomp1` + 装 torch → `docker restart`。
+- **两个必踩的坑（已固化进 Dockerfile）**：
+  1. `python:3.12-slim` **不含 `libgomp1`**，torch CPU 轮子链接它 —— 缺了 `import torch` 直接失败，
+     CNN 会静默退回 OpenCV（`_get_cnn_model` 优雅降级，日志才有 `手写 CNN 加载失败，退回纯 OpenCV`）。
+  2. PyPI / tuna 的 `torch` 是 **CUDA 构建**（拖 ~3GB `nvidia-*`/`cuda-*`/`triton`，撑爆磁盘）。
+     正解：`pip install --no-deps --index-url https://download.pytorch.org/whl/cpu torch==2.14.0`
+     → `torch-2.14.0+cpu` 仅 196MB；运行依赖另从 tuna 装。
+- **线上实测**：容器内 `import torch` → `2.14.0+cpu`；`server._get_cnn_model()` → `SmallCNN`；
+  跑完整 `omr.recognize(cnn_model=…)` 卷 31/32/33 → **30/30 全对**；`/api/health` 200。
+- 数据在 bind mount `/opt/answer-sheet-scanner/data` 持久，重建不丢；
+  将来 `docker rm/run` 走新镜像（也已含 `libgomp1` + CPU torch），不再需要热更新。
+- 注意：fixtures（含真实学生姓名/手写的扫描件）**未纳入部署提交**，仅 `app/ + Dockerfile` 进镜像。
