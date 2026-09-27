@@ -193,8 +193,24 @@ try {
         Show-Log 'scan'
         Fail "产物里有权重且 onnxruntime 在，但 backend 不是 'onnx'（实际：$($cnn.backend)）。"
     }
-    if ($cnn.ready) {
-        Write-Host '    手写 CNN：已装入（权重 + torch 都在，第一次识别时加载）'
+    # 静态自查过了不算数 —— 还得**真加载一次**。
+    #
+    # `cnn.ready` 只看「权重在不在 + onnxruntime 找不找得到」（_cnn_status 的静态判断），
+    # 真加载走的是 `_get_cnn_model()`，两条路径**曾经不一致**：自检用 default_model_path()
+    # 选到 .onnx，加载却硬编码 DEFAULT_MODEL(.pt)，而打包只带 .onnx —— 于是免安装版
+    # 静默退回结构规则，偏偏这个冒烟测试当时只查了静态字段，照样绿。
+    # 现在打 /api/health?deep=1（会真的 InferenceSession 一次）堵死这个缺口。
+    $deep = $null
+    try { $deep = (Get-Text "http://127.0.0.1:$ScanPort/api/health?deep=1") | ConvertFrom-Json } catch { }
+    if ($weightsInPkg) {
+        if ($null -eq $deep -or $deep.cnnLoaded -ne 'onnx') {
+            Show-Log 'scan'
+            Fail ("产物里有 hwletter_cnn.onnx、onnxruntime 也在，但真加载 CNN 失败" +
+                  "（deep.cnnLoaded='$($deep.cnnLoaded)'）—— 加载路径与自检不一致，或 onnxruntime 运行时缺 DLL。")
+        }
+        Write-Host '    手写 CNN：已装入且真加载成功（onnx）'
+    } elseif ($cnn.ready) {
+        Write-Host '    手写 CNN：自检说已装入（产物里没找到权重文件，跳过 deep 检查）'
     } else {
         Write-Host '    手写 CNN：未装入（纯 OpenCV 模式，手写 A-D 精度会低一些）'
     }

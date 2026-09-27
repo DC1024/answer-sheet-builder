@@ -28,6 +28,16 @@ from app import update as upd                   # noqa: E402
 from app import server                          # noqa: E402
 from app import settings as settings_mod        # noqa: E402
 
+# 一个「必炸」的接口，用来验证未捕获异常回的是 JSON 而不是 HTML ——
+# **必须在任何请求之前注册**（Flask 一旦处理过请求就不许再加路由）。
+server.PUBLIC_API.add('/api/_boomtest')         # 绕过登录闸门，直接打到视图
+
+
+@server.app.get('/api/_boomtest')
+def _boomtest():
+    raise RuntimeError('boom')
+
+
 FAILS = []
 
 
@@ -240,6 +250,61 @@ try:
     eq(server.SETTINGS.get()['last_check'], before, '**失败不写缓存**（否则会被锁在「查不到」里 6 小时）')
 finally:
     server.upd.check = saved_check
+
+# ---------------------------------------------------------------- 5. Settings.get(key)
+
+print('\n【5】Settings.get(key) —— /api/update 依赖它（v1.3.0 的 500 就是这里坑的）')
+st3 = settings_mod.Settings(os.path.join(TMP, 'probe-get.json'))
+ok(isinstance(st3.get(), dict), 'get() 无参 → 返回整份设置（向后兼容）')
+eq(st3.get('auto_install'), False, "get('auto_install') → 取单值（不再抛 TypeError 打成 500）")
+eq(st3.get('missing', 'D'), 'D', "get('missing', 默认) → 回退默认值")
+st3.patch({'auto_install': True})
+eq(st3.get('auto_install'), True, 'get(key) 反映落盘的新值')
+
+
+# ---------------------------------------------------------------- 6. CNN 加载路径一致性
+
+print('\n【6】CNN 加载路径必须与自检路径一致（免安装版回归）')
+from app import cnn_letter as _cnn  # noqa: E402
+
+# 免安装版只打包 .onnx、不打包 .pt。曾出现：自检走 default_model_path()（选到 .onnx），
+# 真加载却硬编码 DEFAULT_MODEL（.pt）→ 静默退回结构规则。这里钉死「必须同一个函数」。
+eq(server._cnn_model_path(), _cnn.default_model_path(),
+   '_cnn_model_path() 与 default_model_path() 完全一致')
+cst = server._cnn_status()
+if cst['weights']:
+    want_suffix = '.onnx' if cst['onnx'] else ('.pt' if cst['torch'] else '')
+    ok(server._cnn_model_path().lower().endswith(want_suffix),
+       '有权重时解析路径与所选后端匹配', server._cnn_model_path())
+
+r = c.get('/api/health?deep=1')
+j = r.get_json() or {}
+eq(r.status_code, 200, '/api/health?deep=1 → 200')
+ok('cnnLoaded' in j, 'deep 检查回吐 cnnLoaded（真加载到的后端，而不是静态自检）')
+if (j.get('cnn') or {}).get('ready'):
+    eq(j.get('cnnLoaded'), (j.get('cnn') or {}).get('backend'),
+       '自检说 ready 时，真加载的后端必须与 backend 一致（否则就是自检撒谎）')
+
+# ---------------------------------------------------------------- 7. 出错一律回 JSON
+
+print('\n【7】/api/* 出错一律回 JSON（否则前端 .json() 炸成 Unexpected token）')
+# (a) 已登录访问不存在的 /api 路径 → 404 且是 JSON
+r = c.get('/api/definitely-not-here')
+eq(r.status_code, 404, '已登录的未知 /api 路径 → 404')
+ok('json' in (r.headers.get('content-type') or ''),
+   '404 回的是 JSON 而不是 HTML', r.headers.get('content-type'))
+
+# (b) 未捕获异常 → 500 且是 JSON —— 这正是「检查更新 500」踩的那类坑的通用兜底
+saved_prop = server.app.config.get('PROPAGATE_EXCEPTIONS')
+server.app.config['PROPAGATE_EXCEPTIONS'] = False
+try:
+    r = c.get('/api/_boomtest')
+    eq(r.status_code, 500, '未捕获异常 → 500')
+    ok('json' in (r.headers.get('content-type') or ''),
+       '500 回的是 JSON 而不是 HTML', r.headers.get('content-type'))
+    ok(bool((r.get_json() or {}).get('error')), '500 带 error 字段')
+finally:
+    server.app.config['PROPAGATE_EXCEPTIONS'] = saved_prop
 
 print('\n' + '=' * 56)
 if FAILS:

@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.3.0"><img alt="version" src="https://img.shields.io/badge/version-1.3.0-blue"></a>
+  <a href="https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.3.1"><img alt="version" src="https://img.shields.io/badge/version-1.3.1-blue"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="no backend" src="https://img.shields.io/badge/backend-none-success">
   <a href="https://github.com/DC1024/answer-sheet-builder/actions/workflows/docker.yml"><img alt="docker build" src="https://github.com/DC1024/answer-sheet-builder/actions/workflows/docker.yml/badge.svg"></a>

@@ -26,6 +26,7 @@ import numpy as np
 import cv2
 from flask import (Flask, jsonify, request, send_from_directory, Response,
                    redirect, g)
+from werkzeug.exceptions import HTTPException
 
 from . import __version__ as APP_VERSION
 from . import omr
@@ -88,17 +89,30 @@ _CNN_MODEL = None
 _CNN_TRIED = False
 
 
+def _cnn_model_path():
+    """CNN 权重路径的唯一解析处。
+
+    **`_get_cnn_model` 和 `_cnn_status` 必须走同一个函数** —— 否则会出现
+    「自检说 CNN 能用、真加载却拿错路径而失败」的分裂（v1.3.0 免安装版就踩了这个坑：
+    自检用 `default_model_path()` 选到 `.onnx`，加载却硬编码 `.pt`，而打包只带 `.onnx`
+    → 免安装版静默退回结构规则）。
+
+    规则：`ASB_CNN_MODEL` 显式给出就用它（指到不存在的路径 = 显式关掉 CNN）；
+    否则自动挑 —— 有 onnxruntime + `.onnx` 时优先 `.onnx`，再退 `.pt`。
+    """
+    from . import cnn_letter
+    return os.environ.get('ASB_CNN_MODEL') or cnn_letter.default_model_path()
+
+
 def _get_cnn_model():
-    """返回已加载的 CNN 模型，或 None（无权重/无 torch/加载失败）。线程安全由 GIL 兜底。"""
+    """返回已加载的 CNN 模型，或 None（无权重/无后端/加载失败）。线程安全由 GIL 兜底。"""
     global _CNN_MODEL, _CNN_TRIED
     if _CNN_TRIED:
         return _CNN_MODEL
     _CNN_TRIED = True
     try:
         from . import cnn_letter
-        # 权重路径可被环境变量顶掉：Windows 免安装版用 ASB_CNN_MODEL 指到
-        # 一个不存在的路径即可显式关掉 CNN（省内存），无需卸载 torch。
-        path = os.environ.get('ASB_CNN_MODEL') or cnn_letter.DEFAULT_MODEL
+        path = _cnn_model_path()
         _CNN_MODEL = cnn_letter.load_model(path)
         app.logger.info('手写 CNN 已加载（%s）：%s', _CNN_MODEL.kind, path)
     except Exception as e:  # noqa: BLE001 —— 任何失败都退回 OpenCV，不该让请求崩
@@ -118,7 +132,7 @@ def _cnn_status():
     并不能证明「打包时把 CNN 装对了」。免安装版就是靠这个字段自证的。
     """
     from . import cnn_letter
-    path = os.environ.get('ASB_CNN_MODEL') or cnn_letter.default_model_path()
+    path = _cnn_model_path()
     try:
         have_torch = cnn_letter.have_torch()
         have_ort = cnn_letter.have_onnxruntime()
@@ -513,11 +527,26 @@ def health():
     `engine` 是「本服务当前**实际生效**的识别方案」，与 `cnn.ready` 的区别在于：
     ready 只说「装了没有」，engine 说「跑的时候会不会真的用上」。两者不一致
     （如被 ASB_CNN_MODEL 指到空路径）时，engine 才是老师该看的那一个。
+
+    `?deep=1`：**真的把模型加载一次**（结果被 `_get_cnn_model` 缓存），回 `cnnLoaded`
+    = 实际加载到的后端（'onnx'/'torch'）或 null。因为 `_cnn_status()` 只做静态判断，
+    「静态说能用、真加载却拿错路径」这种分裂它看不出来 —— v1.3.0 免安装版正是栽在这上面
+    （自检选到 .onnx，加载却硬编码 .pt）。CI 冒烟测试打这个 deep 版来兜住这类回归。
     """
+    deep = (request.args.get('deep') or '').lower() in ('1', 'true', 'yes')
     cnn = _cnn_status()
-    return jsonify({'ok': True, 'needSetup': AUTH.need_setup(),
-                    'schema': STORE.schema_version(), 'version': APP_VERSION,
-                    'cnn': cnn, 'engine': _engine_status(cnn)})
+    payload = {'ok': True, 'needSetup': AUTH.need_setup(),
+               'schema': STORE.schema_version(), 'version': APP_VERSION,
+               'cnn': cnn, 'engine': _engine_status(cnn)}
+    if deep:
+        loaded = getattr(_get_cnn_model(), 'kind', None)
+        # 静态说 ready、真加载却失败：以真加载为准，别让自检撒谎
+        if cnn['ready'] and loaded is None:
+            cnn = dict(cnn, ready=False, backend='')
+            payload['cnn'] = cnn
+            payload['engine'] = _engine_status(cnn)
+        payload['cnnLoaded'] = loaded
+    return jsonify(payload)
 
 
 def _engine_status(cnn=None):
@@ -1409,6 +1438,35 @@ def _on_404(e):
     if request.path.startswith('/api/'):
         return jsonify({'error': '没有这个接口'}), 404
     return redirect('/')
+
+
+@app.errorhandler(500)
+def _on_500(e):
+    """兜底：未捕获异常也要回 JSON。
+
+    否则 Flask 默认甩一个 `<!doctype html>...500 Internal Server Error` 的 HTML 页，
+    前端 `response.json()` 直接炸成「Unexpected token '<'，… is not valid JSON」，
+    用户只看到一句看不懂的报错 —— 这次「检查更新」踩的就是这个坑。
+    """
+    orig = getattr(e, 'original_exception', None) or e
+    if request.path.startswith('/api/'):
+        return jsonify({'error': '服务器内部错误', 'detail': '{0}: {1}'.format(
+            type(orig).__name__, orig)}), 500
+    return redirect('/')
+
+
+@app.errorhandler(HTTPException)
+def _on_http_exc(e):
+    """其它 HTTP 异常（400 / 405 / 413 上传超限 …）在 `/api/*` 下一律回 JSON。
+
+    不注册这个的话，Flask 会甩 HTML 错误页，前端 `.json()` 又炸成
+    「Unexpected token '<'」。非 /api/ 路径保持默认（返回该异常自带的响应）。
+    404 有更具体的处理器，会优先命中，不受这里影响。
+    """
+    if request.path.startswith('/api/'):
+        return jsonify({'error': e.description or e.name or '请求出错',
+                        'code': e.code}), e.code
+    return e
 
 
 def create_app():

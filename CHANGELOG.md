@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 本项目所有重要变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.1] - 2026-09-27
+
+### Fixed / 修复
+- **扫描端：修复「检查更新」报「查询失败：Unexpected token '<'，… is not valid JSON」**。`Settings.get()` 原本只接受无参调用、返回整份设置，而 `/api/update` 里却写成了 `SETTINGS.get('auto_install')` —— 于是**每次检查更新都抛 `TypeError`**，Flask 把它渲染成一张 HTML 500 错误页，前端 `response.json()` 解析 HTML 失败，老师看到的就是一串谁也读不懂的天书。修复：`Settings.get()` 现在支持 `get(key, default)` 取单值（无参仍返回整份，向后兼容）；同时给 `/api/*` 的**未捕获异常加了 JSON 兜底处理器**（无论是 500 还是 404，一律回 JSON，绝不再把 HTML 甩给前端），前端 `apijson` 也加了「非 JSON 响应」的可读报错。
+  **Scanner: fixed the "检查更新" (update check) failing with "Unexpected token '<', … is not valid JSON".** `Settings.get()` took no key and returned the whole settings dict, yet `/api/update` called `SETTINGS.get('auto_install')` — so **every update check raised `TypeError`**, which Flask rendered as an HTML 500 page; the frontend's `response.json()` then choked on HTML and surfaced an unreadable error. Fixed by letting `Settings.get(key, default)` take a key (no-arg still returns the whole dict), adding a **JSON fallback handler for uncaught `/api/*` exceptions** (always JSON, never HTML), and making the frontend `apijson` report a readable message on a non-JSON body.
+- **扫描端：修复免安装版手写 CNN 静默失效、只能用结构特征规则**。`_get_cnn_model()` 加载权重时硬编码了 `cnn_letter.DEFAULT_MODEL`（即 `hwletter_cnn.pt`），但打包**只带 `hwletter_cnn.onnx`**（PyTorch 已不是运行依赖）—— 免安装版里 `.pt` 根本不存在，`load_model` 每次都抛 `FileNotFoundError` 被吞掉，手写 A–D 悄悄退回纯 OpenCV（精度 99.2% → 75.5%）。更隐蔽的是**静态自检 `_cnn_status()` 用的是 `default_model_path()`（会选到 `.onnx`），于是它一路报「CNN 就绪」，和真实加载结果自相矛盾**。修复：两者统一走同一个 `_cnn_model_path()`，从根上杜绝这种「自检说能用、真加载拿错路径」的路径分裂。
+  **Scanner: fixed the handwriting CNN silently degrading to structural rules in the portable build.** `_get_cnn_model()` hard-coded `cnn_letter.DEFAULT_MODEL` (the `.pt`) when loading weights, but the build **bundles only `hwletter_cnn.onnx`** (PyTorch is no longer a runtime dep) — so in the portable build the `.pt` does not exist, `load_model` raised `FileNotFoundError` on every attempt and was swallowed, and handwritten A–D quietly fell back to pure OpenCV (99.2% → 75.5%). Worse, the **static self-check `_cnn_status()` used `default_model_path()` (which picks `.onnx`), so it kept reporting "CNN ready" while the real load failed** — a self-contradiction. Fixed by routing both through one shared `_cnn_model_path()`.
+
+### Added / 新增
+- **扫描端：`/api/health?deep=1` 深检**。带 `deep=1` 时会**真的建立一次 ONNX `InferenceSession`** 并回吐 `cnnLoaded`（`onnx`/`torch`/`null`），让打包产物能自证「自检说装好的，到底加载得起来吗」；若静态 `cnn.ready` 为真而真加载失败，则以真加载为准把状态改回未就绪。CI 冒烟测试据此断言产物里的 `hwletter_cnn.onnx` 确实能加载 —— 原来只查静态字段，恰好漏掉了上面那类分裂。
+  **Scanner: `/api/health?deep=1` deep check.** With `deep=1` it actually creates an ONNX `InferenceSession` once and returns `cnnLoaded` (`onnx`/`torch`/`null`), letting the packaged build prove itself; if the static `cnn.ready` is true but the real load fails, the real load wins. The CI smoke test now asserts the bundled `hwletter_cnn.onnx` really loads, closing the gap that the old static-only check missed.
+
 ## [1.3.0] - 2026-09-27
 
 ### Added / 新增
@@ -426,6 +438,8 @@ All notable changes to this project are documented here.
 - Docker 部署（`Dockerfile` + `docker-compose.yml`），纯静态无需后端。
   Docker deployment; pure static, no backend.
 
+[1.3.1]: https://github.com/DC1024/answer-sheet-builder/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.3.0
 [1.2.0]: https://github.com/DC1024/answer-sheet-builder/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.1.0
 [1.0.3]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.3

@@ -48,8 +48,12 @@ class Settings:
                     self._data[k] = raw[k]
         return self._data
 
-    def get(self):
-        return dict(self._data)
+    def get(self, key=None, default=None):
+        """不带参数 → 返回整份设置的拷贝（向后兼容 `SETTINGS.get()`）；
+        带 key → 取单个值（找不到用 default）。`check_update` 等处依赖带参用法。"""
+        if key is None:
+            return dict(self._data)
+        return self._data.get(key, default)
 
     # ------------------------------------------------------------ 写
 

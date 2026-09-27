@@ -496,7 +496,17 @@ async function api(url, opt = {}) {
   if (r.status === 401) { location.href = '/login'; throw new Error('未登录'); }
   return r;
 }
-const apijson = async (url, opt) => (await api(url, opt)).json();
+// 解析 JSON；服务端万一回了 HTML（旧版 500 页 / 反代错误页），给一句人话而不是
+// 把 `Unexpected token '<'` 这种天书甩给老师。
+const apijson = async (url, opt) => {
+  const r = await api(url, opt);
+  const ct = r.headers.get('content-type') || '';
+  if (!ct.includes('json')) {
+    const peek = (await r.text()).slice(0, 60).replace(/\s+/g, ' ');
+    throw new Error(`服务端返回了非 JSON 响应（HTTP ${r.status}）：${peek}`);
+  }
+  return r.json();
+};
 const postj = (url, obj) => apijson(url, {method: 'POST',
   headers: {'Content-Type': 'application/json'}, body: JSON.stringify(exj(obj))});
 
