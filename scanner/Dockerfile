@@ -10,17 +10,12 @@ WORKDIR /srv
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -i ${PIP_INDEX} -r requirements.txt
 
-# 手写 A-D CNN（app/cnn_letter.py）所需的 PyTorch CPU 版。三个坑：
-#  1) slim 基础镜像不含 libgomp1，而 torch CPU 轮子链接它 —— 缺了 import torch 直接失败，
-#     CNN 会静默退回纯 OpenCV（_get_cnn_model 优雅降级）。必须先装 libgomp1。
-#  2) **必须用 CPU 专用索引** `download.pytorch.org/whl/cpu`：PyPI/tuna 上的 `torch` 是
-#     CUDA 构建，会拖进 ~3GB 的 nvidia-* / cuda-* / triton 依赖（镜像暴涨，还撑爆磁盘）。
-#  3) 锁 2.14.0 与训练环境一致，避免 state_dict 跨版本加载风险。
-# torch 的运行依赖（filelock/sympy/…）走 PIP_INDEX，避免 CPU 索引缺依赖。
+# 手写 A-D CNN（app/cnn_letter.py）用 ONNX Runtime 推理：体积小、冷启快、不需要 libtorch。
+# 权重 hwletter_cnn.onnx 已随 app/ 打进镜像；onnxruntime 在 requirements.txt 里装好。
+# slim 基础镜像不含 libgomp1，而 onnxruntime 的 CPU EP 链接它 —— 缺了 import 会直接失败、
+# CNN 静默退回纯 OpenCV（_get_cnn_model 优雅降级），所以必须先装。
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
-    && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir --no-deps --index-url https://download.pytorch.org/whl/cpu torch==2.14.0 \
-    && pip install --no-cache-dir -i ${PIP_INDEX} filelock typing-extensions sympy networkx jinja2 fsspec
+    && rm -rf /var/lib/apt/lists/*
 
 COPY app ./app
 

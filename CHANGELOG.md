@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.
 本项目所有重要变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [1.2.0] - 2026-09-27
 
 ### Added / 新增
 - **扫描端：复核界面显示该生原卷校对图（可缩放 / 拖动）**。阅卷工作台弹窗改为**左右两栏**：左边逐题改答案，右边就是这个考生的原卷校对图 —— 老师改答案时能对着原卷看机器读到的是什么，不再是盲改。图片支持**滚轮缩放（以光标为锚点）**、按住拖动平移、双击复位，按钮「放大 / 缩小 / 适应 / 1:1」，多页卷子可逐面切换。没有可用校对图时（重传覆盖过 / 当时写盘失败）给明确文案，不留空白。
@@ -14,6 +14,8 @@ All notable changes to this project are documented here.
 ### Changed / 变更
 - **扫描端：识别参数按模板类型自动显隐**。`填涂阈值 fillMin` 只作用于选择题填涂圈与卷面考号填涂区，`区分间距 gap` **只**作用于选择题填涂圈 —— 纯手写模板（只有 `write` 作答框）下这两个参数调了完全无效，现在自动隐藏并给一行红字说明，免得老师以为调了有用。`采样精度 pxPerMm` **两者都作用（透视重采样分辨率，手写字母也是在这个分辨率下裁出来送识别的），**永不隐藏**。后端 `_exam_view` 新增 `caps: {bubble, sid}`，前端 `applyParamCaps()` 据此显隐。
   **Scanner: recognition parameters now show/hide per template capability.** `fillMin` only affects bubble-grid cells and the ID fill area, `gap` only affects bubble cells — on a pure-handwriting template both are inert, so they are hidden with a red note instead of misleading the teacher. `pxPerMm` applies to both paths and is never hidden. Backed by `caps: {bubble, sid}` in the exam view.
+- **扫描端：手写 CNN 推理后端从 PyTorch 切换到 ONNX Runtime**。`tools/export_cnn_onnx.py` 把 `hwletter_cnn.pt` 导出成 `hwletter_cnn.onnx`（约 9 MB），并在 249 个真实手写字形上与 torch 逐一对拍（最大概率偏差 < 1e-5，letter 与 conf 双对齐）。运行时 `app/cnn_letter.py` 不再把 torch 当硬依赖：优先用 ONNX Runtime（体积小、冷启快、无 291 MB 的 libtorch），没有 onnxruntime 时自动回退到 `.pt` + torch，两者都缺则退回纯 OpenCV；`default_model_path()` 自动选权重（优先 ONNX）。**打包产物从 203 MB 降到 ~20 MB 级**：`scanner.spec` 不再收 torch、`requirements.txt` 与 `scanner/Dockerfile` 改装 `onnxruntime`、Windows 构建与冒烟测试改用 `onnxruntime` / `hwletter_cnn.onnx` / `backend` 字段自证。精度零退化：ONNX 端到端真实手写净准确率 99.2%，与 torch 记录一致。
+  **Scanner: switched the handwriting CNN backend from PyTorch to ONNX Runtime.** `tools/export_cnn_onnx.py` exports `hwletter_cnn.pt` to `hwletter_cnn.onnx` (~9 MB) and diff-checks it against torch on 249 real handwritten glyphs (max prob deviation < 1e-5, letter and conf both aligned). At runtime `app/cnn_letter.py` no longer treats torch as a hard dependency: it prefers ONNX Runtime (small, fast cold-start, no 291 MB libtorch), falls back to `.pt` + torch when onnxruntime is missing, and to pure OpenCV when both are absent; `default_model_path()` auto-selects (ONNX first). The packaged build drops from 203 MB to the ~20 MB range: `scanner.spec` no longer bundles torch, `requirements.txt` and `scanner/Dockerfile` install `onnxruntime`, and the Windows build/smoke tests self-verify via `onnxruntime` / `hwletter_cnn.onnx` / the `backend` field. No accuracy regression: ONNX end-to-end real-handwriting net accuracy is 99.2%, matching the torch record.
 
 ### Fixed / 修复
 - **工作台弹窗逐题编辑区在无模板时一片空白**。`_qnos(exam, sheets)` 在「无模板且未传入识别结果」（工作台弹窗正是这样调用的）时直接返回空列表，导致方案徽标、机读标红、改答案输入框一个都渲染不出来。现在回退到库里已存学生答案的题号。真实场景考试都带模板所以长期不暴露，属潜在故障点；新增 `tests/test_qnos.py` 钉住。
@@ -414,7 +416,7 @@ All notable changes to this project are documented here.
 - Docker 部署（`Dockerfile` + `docker-compose.yml`），纯静态无需后端。
   Docker deployment; pure static, no backend.
 
-[Unreleased]: https://github.com/DC1024/answer-sheet-builder/compare/v1.1.0...HEAD
+[1.2.0]: https://github.com/DC1024/answer-sheet-builder/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.1.0
 [1.0.3]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.3
 [1.0.2]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.0.2

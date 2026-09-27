@@ -98,7 +98,7 @@ def _get_cnn_model():
         # 一个不存在的路径即可显式关掉 CNN（省内存），无需卸载 torch。
         path = os.environ.get('ASB_CNN_MODEL') or cnn_letter.DEFAULT_MODEL
         _CNN_MODEL = cnn_letter.load_model(path)
-        app.logger.info('手写 CNN 已加载：%s', path)
+        app.logger.info('手写 CNN 已加载（%s）：%s', _CNN_MODEL.kind, path)
     except Exception as e:  # noqa: BLE001 —— 任何失败都退回 OpenCV，不该让请求崩
         _CNN_MODEL = None
         app.logger.warning('手写 CNN 加载失败，退回纯 OpenCV：%s', e)
@@ -116,14 +116,25 @@ def _cnn_status():
     并不能证明「打包时把 CNN 装对了」。免安装版就是靠这个字段自证的。
     """
     from . import cnn_letter
-    path = os.environ.get('ASB_CNN_MODEL') or cnn_letter.DEFAULT_MODEL
+    path = os.environ.get('ASB_CNN_MODEL') or cnn_letter.default_model_path()
     try:
-        have_torch = importlib.util.find_spec('torch') is not None
+        have_torch = cnn_letter.have_torch()
+        have_ort = cnn_letter.have_onnxruntime()
     except Exception:  # noqa: BLE001 —— 冻结环境里 find_spec 也可能抛
-        have_torch = False
+        have_torch = have_ort = False
     have_weights = bool(path) and os.path.isfile(path)
-    return {'weights': have_weights, 'torch': have_torch,
-            'ready': have_weights and have_torch}
+    # backend：实际会被加载的后端；'' = 起不来
+    backend = ''
+    if have_weights:
+        if path.lower().endswith('.onnx'):
+            backend = 'onnx' if have_ort else ''
+        else:  # .pt 仍可能自动优先切到同目录 .onnx
+            if have_ort and os.path.isfile(path[:-3] + '.onnx'):
+                backend = 'onnx'
+            elif have_torch:
+                backend = 'torch'
+    return {'weights': have_weights, 'torch': have_torch, 'onnx': have_ort,
+            'backend': backend, 'ready': bool(backend)}
 
 
 def _recognize_bytes(data, name, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, gap=0.15,
@@ -516,7 +527,7 @@ def _engine_status(cnn=None):
         'choice': omr.ENGINE_RULE,
         'choiceZh': omr.ENGINE_ZH[omr.ENGINE_RULE],
         'cnnNote': (None if cnn['ready'] else
-                    '手写 A-D 走结构特征规则；装好 torch 与权重后会自动升级为 CNN 交叉验证'),
+                    '手写 A-D 走结构特征规则；装好 ONNX 推理后端（onnxruntime）与权重后会自动升级为 CNN 交叉验证'),
     }
 
 

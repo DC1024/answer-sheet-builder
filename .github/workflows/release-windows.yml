@@ -5,7 +5,7 @@
 #   * 手动 workflow_dispatch —— 只构建、只上传 Artifact，不发 Release（拿来验证）
 #
 # 为什么单独一个工作流、而不是塞进 docker.yml：Windows runner 比 Linux 贵、
-# 构建也慢得多（要装 torch 才能打包手写 CNN），跟着 main 的每次 push 跑不划算。
+# 构建也慢得多（要装 onnxruntime 才能打包手写 CNN），跟着 main 的每次 push 跑不划算。
 name: Release (Windows)
 
 on:
@@ -23,7 +23,7 @@ permissions:
 
 env:
   # 与 scanner/Dockerfile 的基础镜像保持一致 —— 本项目的钉死版本
-  # （numpy 1.26.4 / opencv-headless 4.9.0.80 / torch 2.14.0）在 3.12 上都有轮子，
+  # （numpy 1.26.4 / opencv-headless 4.9.0.80 / onnxruntime 1.30.0）在 3.12 上都有轮子，
   # 在 3.13 上 numpy 1.26 没有 cp313 轮子，会退化成本地编译然后失败。
   PYTHON_VERSION: '3.12'
 
@@ -47,21 +47,13 @@ jobs:
       - name: Install scanner deps + PyInstaller
         run: |
           python -m pip install --upgrade pip
+          # onnxruntime 已在 requirements.txt 里，CI 一并装好 —— 手写 CNN 走 ONNX Runtime，
+          # 不再需要 290MB 的 libtorch。
           python -m pip install -r scanner/requirements.txt pyinstaller
 
-      - name: Install PyTorch (CPU) for the handwriting CNN
-        # 与 scanner/Dockerfile 同一套坑与解法：
-        #  1) 必须用 CPU 专用索引 —— PyPI 上的 torch 是 CUDA 构建，会拖进 ~3GB 的
-        #     nvidia-* / cuda-* / triton，runner 磁盘直接爆；
-        #  2) --no-deps 先只装 torch 本体，运行依赖另走官方源装，避免 CPU 索引缺包；
-        #  3) 锁 2.14.0 与训练环境一致，避免 state_dict 跨版本加载风险。
+      - name: Verify onnxruntime is importable
         run: |
-          python -m pip install --no-deps --index-url https://download.pytorch.org/whl/cpu torch==2.14.0
-          python -m pip install filelock typing-extensions sympy networkx jinja2 fsspec
-
-      - name: Verify torch is importable
-        run: |
-          python -c "import torch; print('torch', torch.__version__)"
+          python -c "import onnxruntime; print('onnxruntime', onnxruntime.__version__)"
 
       - name: Build portable packages
         shell: pwsh

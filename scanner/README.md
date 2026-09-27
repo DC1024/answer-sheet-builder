@@ -96,10 +96,10 @@ BASE=http://192.168.1.10:8081 python tests/e2e_service.py
 `test_service.py` 把 zip、名单、补录、越界页序这些接线问题在**部署之前**就拦住。
 `e2e_service.py` 则对着真容器走一遍完整业务流（含批量上传），容器里是 opencv 4.9。
 
-> **CNN 装没装，问 `/api/health` 就行**：它返回 `cnn: {weights, torch, ready}` —— 只做静态判断
-> （权重文件在不在 + `torch` 能不能被 `find_spec` 找到），**不加载模型**（健康检查每几十秒被打一次，
-> 加载一次要 1~2 秒）。权重和 torch 都是**可选件**，缺了服务照样起得来，所以「服务活着」并不能证明
-> 「打包时装对了」；免安装版的冒烟测试就是靠这个字段自证的（产物里有 `hwletter_cnn.pt` 却报
+> **CNN 装没装，问 `/api/health` 就行**：它返回 `cnn: {weights, onnx, backend, ready}` —— 只做静态判断
+> （权重文件在不在 + `onnxruntime` 能不能被 `find_spec` 找到），**不加载模型**（健康检查每几十秒被打一次，
+> 加载一次要 1~2 秒）。权重和 onnxruntime 都是**可选件**，缺了服务照样起得来，所以「服务活着」并不能证明
+> 「打包时装对了」；免安装版的冒烟测试就是靠这个字段自证的（产物里有 `hwletter_cnn.onnx` 却报
 > `weights: false` → 直接判打包失败）。真正加载仍是第一次识别时的懒加载（见 `_get_cnn_model`）。
 
 > 改动识别相关代码后，三份都要跑 —— 尤其 `e2e_service.py`：一个返回 200 的健康探针
@@ -577,7 +577,7 @@ answer-sheet-builder/
 
 | 接口 | 作用 |
 | --- | --- |
-| `GET /api/health` | 探活 + 初始化状态 + **手写 CNN 装没装**（`cnn: {weights, torch, ready}`，只做静态判断、不加载模型）。docker 健康检查打这个，也**不需要登录** |
+| `GET /api/health` | 探活 + 初始化状态 + **手写 CNN 装没装**（`cnn: {weights, onnx, backend, ready}`，只做静态判断、不加载模型）。docker 健康检查打这个，也**不需要登录** |
 | `GET /api/me` | 当前登录身份 / 是否还没初始化 |
 | `POST /api/setup` | 库里一个用户都没有时，创建第一个管理员（之后调用返回 403） |
 | `POST /api/login` | 登录，下发会话 cookie（`asb_sid`，HttpOnly + SameSite=Lax） |

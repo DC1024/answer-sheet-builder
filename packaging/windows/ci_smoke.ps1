@@ -11,7 +11,7 @@
       1. 制卡端  → GET / 应 200，且能取到 ES Module 入口 assets/js/app.js 与 style.css
       2. 扫描端  → GET /api/health 应 200，且 GET / 能拿到首页
       3. 扫描端  → 数据目录里应出现 asb.db（证明 --data 生效、库能建起来）
-      4. 顺带看一眼扫描端日志里 CNN 到底加载上没有（权重在包里，torch 装没装上
+      4. 顺带看一眼扫描端日志里 CNN 到底加载上没有（权重在包里，onnxruntime 装没装上
          只有日志知道）
 
     刻意的实现选择：**不用 Start-Process**，改用 System.Diagnostics.Process。
@@ -180,14 +180,18 @@ try {
     }
     # 权重文件在产物目录里就必须被认出来 —— 认不出说明打包时数据文件没落到 app/ 下。
     $weightsInPkg = @(Get-ChildItem -LiteralPath (Join-Path $Release $DirScan) -Recurse -File `
-            -Filter 'hwletter_cnn.pt' -ErrorAction SilentlyContinue).Count -gt 0
+            -Filter 'hwletter_cnn.onnx' -ErrorAction SilentlyContinue).Count -gt 0
     if ($weightsInPkg -and -not $cnn.weights) {
         Show-Log 'scan'
-        Fail "产物里有 hwletter_cnn.pt，但服务说找不到权重（ASB_CNN_MODEL / DEFAULT_MODEL 路径不对）。"
+        Fail "产物里有 hwletter_cnn.onnx，但服务说找不到权重（ASB_CNN_MODEL / DEFAULT_MODEL 路径不对）。"
     }
-    if ($weightsInPkg -and -not $cnn.torch) {
+    if ($weightsInPkg -and -not $cnn.onnx) {
         Show-Log 'scan'
-        Fail "产物里有权重但没有 torch —— 打包时漏了 torch（构建机上没装？）。"
+        Fail "产物里有权重但没有 onnxruntime —— 打包时漏了 onnxruntime（构建机上没装？）。"
+    }
+    if ($weightsInPkg -and $cnn.backend -ne 'onnx') {
+        Show-Log 'scan'
+        Fail "产物里有权重且 onnxruntime 在，但 backend 不是 'onnx'（实际：$($cnn.backend)）。"
     }
     if ($cnn.ready) {
         Write-Host '    手写 CNN：已装入（权重 + torch 都在，第一次识别时加载）'

@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.1.0"><img alt="version" src="https://img.shields.io/badge/version-1.1.0-blue"></a>
+  <a href="https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.2.0"><img alt="version" src="https://img.shields.io/badge/version-1.2.0-blue"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="no backend" src="https://img.shields.io/badge/backend-none-success">
   <a href="https://github.com/DC1024/answer-sheet-builder/actions/workflows/docker.yml"><img alt="docker build" src="https://github.com/DC1024/answer-sheet-builder/actions/workflows/docker.yml/badge.svg"></a>
@@ -66,12 +66,12 @@
 | 下载 | 双击这个 | 说明 |
 | --- | --- | --- |
 | `...-cardmaker-windows-x64.zip`（约 9 MB） | `答题卡制作器.exe` | 制卡端。会自动起一个只监听 `127.0.0.1` 的本地服务并打开浏览器（页面是 ES Module，`file://` 下打不开） |
-| `...-scanner-windows-x64.zip`（约 210 MB） | `答题卡扫描服务.exe` | 扫描端。默认 <http://127.0.0.1:8081>，**首次打开会让你创建管理员账号** |
+| `...-scanner-windows-x64.zip`（约 20 MB） | `答题卡扫描服务.exe` | 扫描端。默认 <http://127.0.0.1:8081>，**首次打开会让你创建管理员账号** |
 
-> 扫描端这个包为什么大：里面带了**CPU 版 PyTorch**（单一个 `torch_cpu.dll` 就 290 MB）来跑手写
-> A-D 的 CNN（真实手写净准确率 75.5% → 94.3%）。只做填涂识别、不需要手写的话，加 `--no-cnn` 启动
-> 能省内存（包体积不变，因为 DLL 已经在里面了）。想进一步瘦身得上 ONNX Runtime 换个推理后端，
-> 那是另一件事。
+> 扫描端这个包已经瘦身：手写 A-D 的 CNN 改走 **ONNX Runtime** 推理（不再带 290 MB 的 CPU 版
+> PyTorch，`torch_cpu.dll` 没了），zip 从 ~210 MB 降到 **~20 MB**。真实手写净准确率 75.5% → 99.2%，
+> 精度零退化（ONNX 与 torch 在 249 个真实字形上逐一比对、最大偏差 < 1e-5）。只做填涂识别、不需要
+> 手写的话，加 `--no-cnn` 启动能省一点内存（识别自动退回纯 OpenCV）。
 
 ```bat
 答题卡制作器.exe --port 8899          :: 指定端口（默认自动挑一个空闲端口）

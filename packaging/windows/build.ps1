@@ -163,10 +163,10 @@ if (-not $pyiVer) {
 }
 Write-Host "PyInstaller : $pyiVer"
 
-$torchVer = ''
-try { $torchVer = (& $py -c "import torch;print(torch.__version__)" 2>$null | Select-Object -First 1) } catch { }
-$hasTorch = [bool]($torchVer)
-if ($hasTorch) { Write-Host "torch : $torchVer" } else { Write-Host 'torch : （未安装）' }
+$ortVer = ''
+try { $ortVer = (& $py -c "import onnxruntime;print(onnxruntime.__version__)" 2>$null | Select-Object -First 1) } catch { }
+$hasOrt = [bool]($ortVer)
+if ($hasOrt) { Write-Host "onnxruntime : $ortVer" } else { Write-Host 'onnxruntime : （未安装）' }
 
 # ---------------------------------------------------------------- 构建
 
@@ -183,8 +183,8 @@ if ($code -ne 0) { throw "制卡端打包失败（exit $code）" }
 $env:ASB_WIN_EXE_NAME = ''
 
 $withCnn = -not $NoCnn
-if ($withCnn -and -not $hasTorch) {
-    Write-Warning '构建环境里没有 torch —— 扫描端不带手写 CNN，识别自动退回纯 OpenCV。'
+if ($withCnn -and -not $hasOrt) {
+    Write-Warning '构建环境里没有 onnxruntime —— 扫描端不带手写 CNN，识别自动退回纯 OpenCV。'
     $withCnn = $false
 }
 Write-Step "[2/2] 打包扫描端（Flask + OpenCV$(if ($withCnn) { ' + 手写 CNN' }) → onedir）"
@@ -268,14 +268,14 @@ Write-Utf8Bom (Join-Path $cardDir '使用说明.txt') $cardReadme
 
 if ($withCnn) {
     $cnnText = @"
-  本版本【已包含】手写 A-D 的 CNN 增强模型：手写作答框用 CNN 一选 + OpenCV
-  交叉验证，两者不一致或 CNN 置信不足会标为「存疑」进复核队列（绝不硬猜）。
-  实测真实手写整卷净准确率 94.3%（仅 OpenCV 时为 75.5%）。
+  本版本【已包含】手写 A-D 的 CNN 增强模型（ONNX Runtime 推理，无需 libtorch）：
+  手写作答框用 CNN 一选 + OpenCV 交叉验证，两者不一致或 CNN 置信不足会标为
+  「存疑」进复核队列（绝不硬猜）。实测真实手写整卷净准确率 99.2%（仅 OpenCV 时为 75.5%）。
   想省内存可以关掉： set ASB_NO_CNN=1
 "@
 } else {
     $cnnText = @"
-  本版本【未包含】手写 A-D 的 CNN 增强模型（构建环境无 PyTorch）：手写作答框
+  本版本【未包含】手写 A-D 的 CNN 增强模型（构建环境无 ONNX Runtime）：手写作答框
   走纯 OpenCV 特征分类，实测真实手写净准确率 75.5%。识别结果照样会在置信不足
   或双字母时标为「存疑」进复核队列 —— 宁可让老师看一眼，也不替你硬猜。
 "@
@@ -379,7 +379,7 @@ if ($env:GITHUB_STEP_SUMMARY) {
     $md += '| --- | --- |'
     foreach ($r in $rows) { $md += ('| `' + $r.'目录' + '` | ' + $r.'体积' + ' |') }
     $md += ''
-    $md += ('手写 CNN：' + $(if ($withCnn) { '已包含（真实手写净准确率 94.3%）' } else { '未包含（纯 OpenCV 75.5%）' }))
+    $md += ('手写 CNN：' + $(if ($withCnn) { '已包含（ONNX Runtime 推理，真实手写净准确率 99.2%）' } else { '未包含（纯 OpenCV 75.5%）' }))
     $md += ''
     Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $md -Encoding UTF8
 }
