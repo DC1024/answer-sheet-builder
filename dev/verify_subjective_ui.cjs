@@ -27,6 +27,9 @@ const EXE = process.env.CHROME || path.join(process.env.LOCALAPPDATA || '', 'ms-
   'chromium-1234', 'chrome-win64', 'chrome.exe');
 const USER = process.env.ADMIN_USER || 'uiadmin';
 const PW = process.env.ADMIN_PW || 'uitest12345';
+// 顺手留两张图：出问题时比一行 "x 表格总分列 32/35" 有用得多，
+// 也能直接拿来贴 issue / 放进发布说明。落在 gitignore 掉的 dev/.cache 下。
+const SHOT_DIR = process.env.SHOT_DIR || path.join(__dirname, '.cache', 'shots');
 
 let FAILS = 0, PASS = 0;
 function assert(cond, msg, extra){
@@ -34,6 +37,16 @@ function assert(cond, msg, extra){
   else { PASS++; console.log('  v ' + msg + (extra ? '  ' + extra : '')); }
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// 截图失败绝不该让验证变红 —— 它只是附件，不是断言。
+async function shot(page, name){
+  try {
+    fs.mkdirSync(SHOT_DIR, { recursive: true });
+    const p = path.join(SHOT_DIR, name + '.png');
+    await page.screenshot({ path: p, fullPage: false });
+    console.log('  （截图）' + p);
+  } catch (e) { console.log('  （截图失败，忽略）' + e.message); }
+}
 
 (async () => {
   if (!fs.existsSync(EXE)) throw new Error('找不到 Chromium：' + EXE + '（用 CHROME= 指定）');
@@ -60,6 +73,28 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   assert(!/\/login/.test(page.url()), '登录成功并跳离 /login', page.url());
   await page.waitForSelector('#tabs .tab', { timeout: 10000 });
 
+  console.log('\n=== 0b. 清掉上一轮跑剩的复核结果（让这个脚本可以反复跑）===');
+  // 这个脚本自己会保存复核（F 段），所以第二次跑的时候库里已经有分了。
+  // 与其要求「先删数据目录再跑」（谁都会忘，忘了就得到一串莫名其妙的红），
+  // 不如自己先把状态抹平 —— 用页面里的登录态直接打接口。
+  const reset = await page.evaluate(async () => {
+    const gj = await (await fetch('/api/gradebook', { credentials: 'same-origin' })).json();
+    const sids = (gj.students || []).map(s => s.sid);
+    const out = [];
+    for (const sid of sids){
+      const r = await fetch('/api/grade', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sid, grading: {
+          overrides: {}, scores: {}, subs: {}, manualScore: null, review: false, note: '' } }),
+      });
+      out.push(sid + ':' + r.status);
+    }
+    return out;
+  });
+  assert(reset.length > 0 && reset.every(x => x.endsWith(':200')),
+    '上一轮的复核结果已清空（脚本可反复跑）', reset.join(' '));
+
   console.log('\n=== A. 阅卷页：三个人 + 三列表头 ===');
   await page.click('#tabs .tab[data-page="grade"]');
   await page.click('#gbRefresh');
@@ -75,7 +110,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   // 主观分为 0 的（还没阅）应显示为灰字 hint，而不是像「真的 0 分」那样扎眼
   const subCell = await page.$eval('#gbBody tbody tr td:nth-child(5)', td => td.innerHTML);
   assert(/hint/.test(subCell), '未阅卷的主观分是灰色提示样式', subCell.trim().slice(0, 60));
-
+  await shot(page, '1-gradebook');
   console.log('\n=== B. 打开复核弹窗：主观题卡片结构 ===');
   await page.click('#gbBody tbody tr:first-child button[data-sid]');
   await page.waitForSelector('#gbModal.on', { timeout: 10000 });
@@ -115,6 +150,41 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   });
   assert(cropOk.ok, '裁剪图真的加载出了像素', JSON.stringify(cropOk));
 
+  console.log('\n=== C2. 两列真并排 + 卡片里的裁剪图不许撑破左列 ===');
+  // 这是量出来的，不是看出来的。主观题卡片里多了一张裁剪图，而 CSS Grid 的网格项默认
+  // min-width:auto —— 一张原图宽 1505px 的裁剪图足以把左列顶宽、把右列挤出去，
+  // 或者干脆糊在右列底下（v1.3.2 修过一次同类「并排/错位」）。眼睛在小图上很难判断，
+  // 所以这里直接比矩形。
+  const geo = await page.evaluate(() => {
+    const body = document.querySelector('#gbModalBody');
+    const col = body.querySelector('.gbqcol');
+    const pane = body.querySelector('.gbimgcol');
+    const over = el => {
+      const pr = el.parentElement.getBoundingClientRect();
+      return +(el.getBoundingClientRect().right - pr.right).toFixed(2);
+    };
+    return {
+      colRight: +col.getBoundingClientRect().right.toFixed(2),
+      paneLeft: +pane.getBoundingClientRect().left.toFixed(2),
+      cropOver: [...body.querySelectorAll('.scrop')].map(over),
+      // 卡片里任何一个后代超出卡片右边多少（负=没超）
+      cardOver: [...body.querySelectorAll('.subcard')].map(c => {
+        const cr = c.getBoundingClientRect();
+        return +[...c.querySelectorAll('*')]
+          .reduce((m, el) => Math.max(m, el.getBoundingClientRect().right - cr.right), 0).toFixed(2);
+      }),
+      bodyOver: body.scrollWidth - body.clientWidth,
+    };
+  });
+  assert(geo.paneLeft >= geo.colRight - 1,
+    '左列（题目）与右列（阅卷图）真的并排、不重叠',
+    `colRight=${geo.colRight} paneLeft=${geo.paneLeft}`);
+  assert(geo.cropOver.every(v => v <= 1), '裁剪图没有超出所在卡片（max-width:100% 真的生效）',
+    JSON.stringify(geo.cropOver));
+  assert(geo.cardOver.every(v => v <= 1), '卡片里没有后代溢出卡片右边界',
+    JSON.stringify(geo.cardOver));
+  assert(geo.bodyOver <= 1, '弹窗内容区没有横向溢出（不出现横向滚动条）', String(geo.bodyOver));
+
   console.log('\n=== D. 打小问分 → 小计 / 合计预览 / 表格同步 ===');
   await page.fill('.subcard[data-subq="21"] .subin[data-i="0"]', '4');
   await page.fill('.subcard[data-subq="21"] .subin[data-i="1"]', '6');
@@ -128,6 +198,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   let pv = (await page.textContent('#gbPreview')).trim();
   assert(/客观 19(\.0)? ＋ 主观 13(\.0)? ＝ 32(\.0)? \/ 35(\.0)?/.test(pv),
     '合计预览 = 客观19 + 主观(10+3) = 32 / 35', pv);
+  await shot(page, '2-grading-modal');
   // 超满分要夹住（老师手滑打了 60）
   await page.fill('.subcard[data-subq="22"] .subin[data-i="-1"]', '60');
   await sleep(120);
@@ -146,6 +217,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     '切「整页校对」→ /api/overlay/<rid>.png', String(src));
   const segOn2 = await page.$$eval('#gbSeg button.on', bs => bs.map(b => b.textContent.trim()));
   assert(segOn2.join('') === '整页校对', '分段控件高亮切到「整页校对」', segOn2.join(''));
+  await shot(page, '3-fullpage-mode');
   await page.click('#gbSeg button[data-gbmode="crop"]');
   await sleep(150);
   src = await page.getAttribute('#gbImg', 'src');
