@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 本项目所有重要变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.2] - 2026-09-27
+
+### Fixed / 修复
+- **扫描端：修复「细笔画卷整卷读不出」——第12/28份 10 题只读得出 1 题**。手写框里的字母笔画细（约 2–3px）时，二值化会把**一个字母切成两块**（实拍一个 A 的两条竖笔之间隔了 11px，因为横杠太淡没进二值图）。`hwletter.extract_glyph` 有两个缺陷被同时踩中：①**主字形按「面积最大者」选取**，而细笔画卷上面积最大的往往是纸面方框的一条竖边（实测 240px）而不是字母（132px），于是真正的字母成了「次大域」；②**multi 判据是「次大域与主域包围盒重叠是否过半」**，而同一字母的两段本来就是并排不重叠的，于是被判成「学生写了两个字母」直接弃答。实测 30 张手写版真实卷：**弃答 44/300（14.7%）、正确率 83.0%**。修复后**弃答 0、正确率 96.0%**。三处改动：主字形改为「面积最大的**非框线**连通域」；multi 判据改为「保留块的**并集宽度**是否超出单字母宽度（0.72×框宽）」；并集只统计本身够得上字母尺寸（宽≥0.25×框宽）的块，避免落在 `(0,2)` 这种「差 1px 贴边」位置躲过框线剔除的角块把并集宽度撑大。
+  **Scanner: fixed handwriting sheets with thin strokes reading almost nothing (sheets 12/28 returned 1 of 10 answers).** When the letters in the write box are thin (~2–3px), binarization **splits a single letter into two blobs** (on a real photo the two legs of an "A" were 11px apart, because the thin crossbar never made it into the binary image). Two flaws in `hwletter.extract_glyph` were hit at once: ① the **main glyph was chosen as "largest component"**, but on thin-stroke sheets the largest component is often a **vertical edge of the printed box** (measured 240px) rather than the letter (132px), so the real letter became the "second" blob; ② the **multi test was "does the second blob's bbox overlap the main's by more than half"**, and the two halves of one letter are side-by-side and *never* overlap — so it was judged "the student wrote two letters" and the answer was dropped. Measured on 30 real handwritten sheets: **44/300 dropped (14.7%), 83.0% correct**. After the fix: **0 dropped, 96.0% correct**. Three changes: the main glyph is now the **largest non-frame component**; the multi test now uses **union width of the kept blobs** (letter-sized if ≤ 0.72 × box width); and the union only counts blobs that are themselves letter-sized (width ≥ 0.25 × box width), so a frame corner landing at `(0,2)` — 1px off the edge test — can no longer inflate it.
+- **扫描端：修复手写的「静默错答」——两路分类器一致，却是一起错**。手写题走「CNN 一选 + 结构规则交叉验证」，原逻辑把「两路结果一致」直接当成互相印证、标 `ok`。但细笔画卷上整个字母只剩两段竖笔，结构规则那一路的几何特征本来就撑不住（评分 0.36），此时「一致」只是碰巧同错。新增一档：**两路一致但结构规则评分低于 `RULE_AGREE_MIN`（0.4）时降级为 `doubt`**，交人工复核。实测把这类静默错答从 2 个压到 1 个，代价只多标 12 题（用结构规则自身的 `DOUBT_CONF`=1.0 效果相同却要多标 31 题）。
+  **Scanner: fixed "silent wrong answers" in handwriting grading — both classifiers agree, but both are wrong.** Handwritten questions use "CNN primary + structural-rule cross-check", and the old logic treated **agreement between the two as mutual confirmation** and flagged it `ok`. But on thin-stroke sheets the whole letter is just two vertical strokes, and the structural rule's geometric features were never solid (score 0.36) — so "agreement" merely meant both were wrong in the same way. Added a tier: **when the two agree but the structural rule's score is below `RULE_AGREE_MIN` (0.4), downgrade to `doubt`** for human review. This cut such silent errors from 2 to 1 at the cost of only 12 extra flagged questions (using the rule's own `DOUBT_CONF` = 1.0 gives the same result but flags 31).
+
+### Added / 新增
+- **扫描端：细笔画卷回归测试 `tests/test_hwletter.py [D]`**。用实拍裁剪图的连通域实测值构造最小复现：细笔画字母 + 方框竖边 + 落在 `(0,2)` 的框角块，断言主字形必须选到字母、不得判 multi；并附「真并排两个字母仍要判 multi」的反例，防止修复过头。
+  **Scanner: regression test `tests/test_hwletter.py [D]` for thin-stroke sheets.** Builds a minimal reproduction from measured connected-component values of a real crop — thin-stroke letter + box vertical + a corner blob at `(0,2)` — and asserts the main glyph is the letter and it is not judged multi, plus a counter-example ("two genuinely side-by-side letters must still be multi") so the fix cannot overshoot.
+
 ## [1.3.1] - 2026-09-27
 
 ### Fixed / 修复
@@ -438,6 +450,7 @@ All notable changes to this project are documented here.
 - Docker 部署（`Dockerfile` + `docker-compose.yml`），纯静态无需后端。
   Docker deployment; pure static, no backend.
 
+[1.3.2]: https://github.com/DC1024/answer-sheet-builder/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/DC1024/answer-sheet-builder/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.3.0
 [1.2.0]: https://github.com/DC1024/answer-sheet-builder/compare/v1.1.0...v1.2.0

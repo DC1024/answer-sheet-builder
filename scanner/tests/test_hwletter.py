@@ -167,10 +167,66 @@ def test_e2e_handwrite():
     assert n_ok >= 3, f'手写整卷识别过少：{n_ok}/10（合成字体变形不可控，但链路应工作）'
 
 
+def _rect(box, x, y, w, h, val=255):
+    box[y:y + h, x:x + w] = val
+
+
+def test_thin_stroke_box():
+    """细笔画卷：字母被二值化切成几段、且纸面方框碎片同时在场。
+
+    这两条是**真实事故**（第12/28份整卷 10 题只读得出 1 题）的最小复现，
+    参数直接取自实拍裁剪图的连通域实测值：
+
+      1) 主字形不能取「面积最大者」——细笔画卷上面积最大的往往是方框的
+         一条竖边（实测 240px），真正的字母只有 132px。按面积选主字形会
+         把字母当成「次大域」，再因包围盒不重叠被判 multi 弃答。
+      2) multi 判据不能用「次大域与主域包围盒是否重叠」——同一个 A 的两条
+         竖笔断成两块后本来就不重叠（实测间距 11px），会被整卷冤枉成 multi。
+      3) multi 判据也不能把**贴边角块**算进并集宽度：角块落在 (0,2) 时躲过
+         _is_frame_piece（它只在 <=1 时判贴边），会把并集宽度从 0.48 撑到 0.73。
+    """
+    # —— 复现第12份 Q10 的真实连通域布局（56×69 采样框）——
+    box = np.zeros((69, 56), np.uint8)
+    _rect(box, 51, 3, 5, 48)     # 方框右竖边（面积最大，240）
+    _rect(box, 34, 33, 8, 24)    # 字母碎片 A
+    _rect(box, 0, 16, 3, 35)     # 方框左竖边
+    _rect(box, 15, 38, 8, 18)    # 字母碎片 B
+    _rect(box, 51, 52, 5, 17)    # 方框右角块
+    _rect(box, 0, 2, 12, 13)     # 方框左上角块（落在 (0,2)，旧判据漏网）
+
+    g, meta = hwletter.extract_glyph(box)
+    assert g is not None, f'细笔画卷 + 框线碎片：不该判 multi/空框（meta={meta}）'
+    assert not meta.get('multi'), f'细笔画卷不该判 multi（meta={meta}）'
+    # 主字形必须是字母那两块（膨胀后 260 / 200），不是方框竖边（402）。
+    # 取 300 作上界：低于方框竖边、高于真实字母块，两边都留了余量。
+    assert meta['area'] <= 300, f'主字形选成了方框竖边（area={meta["area"]}，应为 ~260）'
+    assert meta['frame_drop'] >= 2, f'方框碎片应被剔除（frame_drop={meta["frame_drop"]}）'
+    assert meta['blobs'] == 2, f'字母两块都应保留（blobs={meta["blobs"]}）'
+
+    # —— 复现第12份 Q1：A 的两条竖笔，中间横杠太淡没进二值图（间距 11px）——
+    box2 = np.zeros((69, 56), np.uint8)
+    _rect(box2, 16, 27, 8, 28)
+    _rect(box2, 35, 30, 8, 26)
+    g2, meta2 = hwletter.extract_glyph(box2)
+    assert g2 is not None and not meta2.get('multi'), \
+        f'同一字母断成两条竖笔不该判 multi（meta={meta2}）'
+
+    # —— 反例：真并排写了两个字母，必须仍然判 multi ——
+    box3 = np.zeros((69, 56), np.uint8)
+    _rect(box3, 6, 20, 22, 34)   # 第一个字母
+    _rect(box3, 32, 20, 22, 34)  # 第二个字母，并集宽度 48/56 = 0.86 > 0.72
+    g3, meta3 = hwletter.extract_glyph(box3)
+    assert g3 is None and meta3.get('multi'), \
+        f'真并排两个字母仍要判 multi（meta={meta3}）'
+
+    print('[D] 细笔画卷 + 框线碎片：主字形选取 / multi 判据全部正确')
+
+
 def main():
     test_printed()
     test_deform()
     test_e2e_handwrite()
+    test_thin_stroke_box()
     print('\n🎉 手写字母分类（hwletter）全部通过')
     sys.exit(0)
 

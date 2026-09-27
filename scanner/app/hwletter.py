@@ -21,6 +21,9 @@ CANVAS = 48
 HOLE_MIN = 0.03
 # 置信度低于它 → doubt（交老师复核，不硬猜）
 DOUBT_CONF = 1.0
+# multi 判据：所有保留连通域的**并集宽度**超过作答框宽度的这个比例时，
+# 才认为「学生并排写了两个字母」（单个字母实测 ≤0.55，两个字母必然 ≥0.72）。
+MULTI_UNION_W = 0.72
 
 
 def extract_glyph(thr_box, min_area_ratio=0.02, frame_th=0.82):
@@ -99,33 +102,52 @@ def extract_glyph(thr_box, min_area_ratio=0.02, frame_th=0.82):
         return None, {'blobs': 0, 'area': ink}
     comps.sort(key=lambda c: -c[0])
 
-    keep = [comps[0]]                                # 主字形
-    frame_drop = 0
-    for c in comps[1:]:
-        i = c[1]
-        if _is_frame(i) or _is_frame_piece(i):
-            frame_drop += 1
-            continue
-        keep.append(c)
+    # 主字形 = 面积最大、且**不是框线**的连通域。
+    #
+    # 早先无条件取 comps[0]（并注释「主字形永远保留，免得满框大字被误删」），
+    # 在**细笔画卷**上会翻车：字母笔画细（3px 上下）时二值化会把一个字切成
+    # 好几段，此时面积最大的那块往往是纸面方框的一条**竖边**（实测第12/28/
+    # 20/26 份，框边面积 240 > 字母碎片 132）。于是真正的字母反被当成「次大域」，
+    # 又因为它在主域（框边）左侧、包围盒不重叠 → 被判 multi 弃答 —— 整卷 10 题
+    # 只读得出 1 题，就是这么来的。
+    #
+    # 框线判据（_is_frame / _is_frame_piece）本就只该作用于「非主字形」，
+    # 所以这里先把框线整体剔除再选主字形；写得满框的大字不会贴边、也不细长，
+    # 不会被 _is_frame_piece 命中，仍然安全（_is_frame 兜底见下）。
+    non_frame = [c for c in comps if not (_is_frame(c[1]) or _is_frame_piece(c[1]))]
+    frame_drop = len(comps) - len(non_frame)
+    if not non_frame:
+        # 整个框都是框线（采样框落在方框上却没有墨字）→ 没有字形可提。
+        return None, {'blobs': 0, 'area': ink,
+                      'frame_drop': frame_drop, 'raw_blobs': len(comps)}
+    keep = list(non_frame)
     main = keep[0]
     meta = {'blobs': len(keep), 'area': int(main[0]),
             'frame_drop': frame_drop, 'raw_blobs': len(comps)}
 
-    # 次大连通域仍占主体 1/4 以上 → 可能写了两个字母。
-    # 但真实手写里**同一个字母常被断笔切成上下两段**（横杠、收笔与主体分离），
-    # 形态上也是「两大团墨」，却不是两个字 —— 直接按面积判 multi 会冤枉它们
-    # （实测 48 个残留 multi 多数是这种）。区分方法看**空间关系**：
-    #   两个字母并排写 → 次大域在主体左/右侧，包围盒基本不重叠
-    #   同一字母断笔   → 次大域在主体上/下方且大量落在主体包围盒内
-    mx0, my0, mx1, my1 = main[2], main[3], main[2] + main[4], main[3] + main[5]
+    # 次大连通域仍占主体 1/4 以上 → 可能是「写了两个字母」，也可能只是同一字母
+    # 被二值化切断。旧判据用「次大域包围盒与主域重叠 < 50% → multi」，在**细笔画卷**
+    # 上过于激进：一个 A 的两条竖笔、一个 C 的上下两弧断成两块后，包围盒本来就不重叠
+    # （实测 A 两腿间距 11px），于是整卷被判 multi 弃答。
+    #
+    # 改用**并集包围盒是否还是一个字母的宽度**来判：
+    #   · 同一字母的碎片   → 并集宽度仍是一个字母（实测 27px / 56px 盒 = 0.48）
+    #   · 真并排写了两个字母 → 并集宽度接近整个作答框（两字各 ~25px，合起来 ≥ 45px）
+    #
+    # 但并集只能算「像字母的那几块」：纸面方框的角块有时恰好落在 (0,2) 这种
+    # 贴边但差 1px 的位置，躲过 _is_frame_piece（它只在 <=1 时判贴边），面积却不小
+    # （实测 84px）。它一旦算进并集，会把宽度从 0.48 撑到 0.73，让一个断成两段的
+    # 单字母重新被冤枉成 multi（第04/12份 Q10）。所以只统计**本身够得上一个字母
+    # 尺寸**的块（宽 ≥ 0.25w），边角碎墨天然被排除。
     if len(keep) > 1 and keep[1][0] > main[0] * 0.25:
-        c = keep[1]
-        ix0, iy0 = max(c[2], mx0), max(c[3], my0)
-        ix1, iy1 = min(c[2] + c[4], mx1), min(c[3] + c[5], my1)
-        inter = max(0, ix1 - ix0) * max(0, iy1 - iy0)
-        # 包围盒重叠不足一半 → 空间上确实是分开的第二团 → 才判 multi
-        if inter < 0.5 * max(1, c[4] * c[5]):
-            return None, dict(meta, multi=True)
+        big = [c for c in keep if c[0] >= main[0] * 0.25 and c[4] >= 0.25 * w]
+        if len(big) > 1:
+            ux0 = min(c[2] for c in big)
+            ux1 = max(c[2] + c[4] for c in big)
+            if (ux1 - ux0) > MULTI_UNION_W * w:
+                return None, dict(meta, multi=True)
+    mx0, my0 = main[2], main[3]
+    mx1, my1 = mx0 + main[4], my0 + main[5]
     mask = np.zeros_like(thr_box)
     for c in keep:
         a, i, x, y, bw, bh = c

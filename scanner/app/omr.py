@@ -45,6 +45,15 @@ SID_REL_MIN = 0.15      # 与列内最浅的格子之差小于它就认为「这
 SID_GAP = 0.12          # 最优与次优的差距小于它就认为「一列涂了两个 / 涂糊了」
 SID_SECOND_MIN = 0.2    # 次优那一格自己也得够深才叫 doubt（同 decide 的 second_rel_min）
 
+# 手写作答题走「CNN 一选 + 结构规则交叉验证」时，两路**一致**要有多可信：
+# 结构规则那一路的评分低于它，就不把「一致」当成互相印证，而是降级为 doubt（交复核）。
+# 起因：细笔画卷上整个字母只剩两段竖笔，几何特征撑不住（评分 0.36），
+# CNN 也会跟着错，两路「一致」只是碰巧同错 —— 实测第28份 Q8/Q10 的静默错答就是这么漏的。
+# 0.4 是实测拐点：oc_conf 在 0.24/0.36/0.4~0.51/0.7/1.1 几档上聚集，
+# 取 0.4 能扣下全部静默错答而只多标 12 题；取结构规则自身的 DOUBT_CONF(1.0)
+# 效果相同却要多标 31 题。
+RULE_AGREE_MIN = 0.4
+
 
 class OmrError(Exception):
     pass
@@ -422,7 +431,16 @@ def decode_write(warp, questions, px_per_mm, faint_ink=0.15, cnn_model=None):
 
         if cnn_conf >= cnn_letter.CNN_THRESH:
             letter = cnn_lbl
-            flag = 'review' if (oc_letter is not None and oc_letter != cnn_lbl) else 'ok'
+            if oc_letter is not None and oc_letter != cnn_lbl:
+                flag = 'review'           # 两路不一致 → 复核
+            elif oc_conf < RULE_AGREE_MIN:
+                # 两路**一致**，但结构规则那一路自己也没底气（细笔画卷实测常见：
+                # 整个字母只由两段竖笔构成，CNN 认得出、几何特征却撑不住）。
+                # 这种「一致」不是互相印证，只是碰巧同错 —— 静默错答正是从这儿漏出去的
+                # （实测第28份 Q8/Q10：两路都说 D/A，真值却是 A/B）。
+                flag = 'doubt'
+            else:
+                flag = 'ok'
         else:
             # CNN 不自信：仍输出它的猜测，但标存疑
             letter = cnn_lbl

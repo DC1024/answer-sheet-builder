@@ -165,8 +165,13 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 /* ---- 工作台：左边逐题改答案 / 右边原卷校对图（可缩放、可拖动） ---- */
 #gbModal .box{max-width:1120px;}
 .gbwrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,430px);gap:14px;margin-top:10px;align-items:start;}
-@media (max-width:960px){ .gbwrap{grid-template-columns:minmax(0,1fr);} }
-.gbimgcol{border:1px solid var(--line);border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;}
+/* 题目列必须是单独一个网格项（openGrade 里把 .gbq-hd + .gbq 包进 .gbqcol）；
+   并且 min-width:0 —— 否则内部 .gbq 的 auto-fill 网格会拒绝收缩，把两栏挤错位 */
+.gbqcol{min-width:0;display:flex;flex-direction:column;}
+/* 校对图列比题目列矮，钉在顶部：题目多的时候也能一直对着原卷看，不用来回滚 */
+.gbimgcol{border:1px solid var(--line);border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;
+  align-self:start;position:sticky;top:0;}
+@media (max-width:1000px){ .gbwrap{grid-template-columns:minmax(0,1fr);} .gbimgcol{position:static;} }
 .gbimgtools{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
 .gbpages{display:flex;gap:6px;flex-wrap:wrap;}
 .gbpages button{padding:3px 9px;font-size:12px;}
@@ -1150,7 +1155,10 @@ function openGrade(sid){
         <div class="hint">滚轮缩放 · 按住图片拖动移动 · 双击复位</div>`
         : '<div class="hint" style="padding:16px 0">这个考生没有可用的校对图（这批可能是重传覆盖过的，或当时写盘失败）。</div>'}
     </div>`;
-  $('#gbModalBody').innerHTML = sidEdit + '<div class="gbwrap">' + body + imgPane + '</div>';
+  // body 本身是「.gbq-hd + .gbq」两个同级元素 —— 必须再包一层，否则 .gbwrap 这个
+  // 两列网格会收到 3 个子项，排成「hd | .gbq / img」的错位布局（题目被挤到右侧窄列、
+  // 校对图掉到左下）。包成 1 个子项后才是「左：题目 / 右：校对图」。
+  $('#gbModalBody').innerHTML = sidEdit + '<div class="gbwrap"><div class="gbqcol">' + body + '</div>' + imgPane + '</div>';
   $('#gbModalTitle').textContent = `${s.sid} ${s.name || ''} ${s.cls || ''}`.trim();
   $('#gbReview').checked = GEDIT.review;
   $('#gbNote').value = GEDIT.note;
