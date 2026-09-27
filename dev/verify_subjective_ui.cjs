@@ -110,7 +110,6 @@ async function shot(page, name){
   // 主观分为 0 的（还没阅）应显示为灰字 hint，而不是像「真的 0 分」那样扎眼
   const subCell = await page.$eval('#gbBody tbody tr td:nth-child(5)', td => td.innerHTML);
   assert(/hint/.test(subCell), '未阅卷的主观分是灰色提示样式', subCell.trim().slice(0, 60));
-  await shot(page, '1-gradebook');
   console.log('\n=== B. 打开复核弹窗：主观题卡片结构 ===');
   await page.click('#gbBody tbody tr:first-child button[data-sid]');
   await page.waitForSelector('#gbModal.on', { timeout: 10000 });
@@ -266,6 +265,8 @@ async function shot(page, name){
   assert(rowCells[4] === '13/16', '表格主观分列 13/16', JSON.stringify(rowCells.slice(0, 6)));
   assert(rowCells[5] === '32/35', '表格总分列 32/35', JSON.stringify(rowCells.slice(0, 6)));
   assert(/待复核/.test(rowCells[6] || ''), '表格标注列显示了「待复核」', rowCells[6]);
+  // 这一张最有代表性：客观 19/19、主观 13/16、总分 32/35，三列都有真数
+  await shot(page, '1-gradebook');
 
   await page.click('#gbBody tbody tr:first-child button[data-sid]');
   await page.waitForSelector('#gbModal.on', { timeout: 10000 });
