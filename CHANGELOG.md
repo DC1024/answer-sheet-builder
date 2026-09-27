@@ -3,6 +3,16 @@
 All notable changes to this project are documented here.
 本项目所有重要变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.0] - 2026-09-27
+
+### Added / 新增
+- **扫描端：自动下载并安装更新（Windows 免安装版专用）**。设置页新增「自动下载并安装更新」开关；配合原有的「自动检查更新」，发现新版本后会**后台下载 GitHub Release 的免安装版压缩包并暂存到 `data/updates/`**，下次点「安装并重启」即可原地替换整个程序目录（含 `.bak` 备份与失败回滚）。整条链路**只用标准库**（`urllib`/`zipfile`/`subprocess`/`shutil`，不引入第三方依赖，保证可被 PyInstaller 冻结），并用**双进程方案规避 Windows 文件占用**：当前服务把自身复制到 TEMP 的 `asb-update-bootstrap.exe`、写下 `update_pending.json` 后退出，由 bootstrap 等旧进程彻底退出再落地替换、最后拉起新版本。`设置 → 版本与更新` 里也有手动「下载更新 / 安装并重启」按钮与下载进度，源码运行 / 容器 / 非 Windows 环境自动判定为「不支持自动安装」，界面相应收起控件。
+  **Scanner: automatic download-and-install update (Windows portable build only).** A new "自动下载并安装更新" toggle on the Settings page; together with the existing "自动检查更新", a detected new version is downloaded in the background from the GitHub Release asset and staged under `data/updates/`, and an "安装并重启" button swaps the whole program directory in place (with `.bak` backup and rollback on failure). The engine is **standard-library only** (`urllib`/`zipfile`/`subprocess`/`shutil`, no third-party deps, so it freezes under PyInstaller) and uses a **two-process design** to dodge Windows file locking: the running service copies itself to a TEMP `asb-update-bootstrap.exe`, writes `update_pending.json`, then exits; the bootstrap waits for the old process to be gone, applies the directory swap, and relaunches the new build. The Settings → Version & Update panel also exposes manual "下载更新 / 安装并重启" buttons with a live download progress; source runs / containers / non-Windows are auto-detected as "not supported" and the controls hide accordingly.
+
+### Changed / 变更
+- **更新检查接口回带自更新状态**。`GET /api/update` 现在一并返回 `selfUpdateAvailable` / `autoInstall` / `download`（下载状态字典），`GET /api/settings` 带回 `selfUpdateAvailable`；新增 `POST /api/update/download`、`GET /api/update/progress`、`POST /api/update/install` 三个接口支撑前端手动下载 / 轮询进度 / 落地安装。
+  **Update check now reports self-update state.** `GET /api/update` additionally returns `selfUpdateAvailable` / `autoInstall` / `download` (the download-state dict), `GET /api/settings` returns `selfUpdateAvailable`, and three endpoints `POST /api/update/download`, `GET /api/update/progress`, `POST /api/update/install` drive the manual download / progress polling / install flow.
+
 ## [1.2.0] - 2026-09-27
 
 ### Added / 新增

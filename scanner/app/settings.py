@@ -12,6 +12,7 @@ import os
 
 DEFAULTS = {
     'auto_check_update': True,   # 打开界面时自动查一次新版本
+    'auto_install': False,       # 发现新版本时自动下载并安装（仅 Windows 免安装版生效）
     'last_check': 0,             # 上次检查的 unix 时间戳，0 = 从没查过
     'last_result': None,         # 上次的检查结果（update.check 的返回结构）
 }
@@ -20,7 +21,7 @@ DEFAULTS = {
 # 一个班几十号人开着页面，每人刷新一次就去打一次 API 是会被限流的。
 CHECK_INTERVAL = 6 * 3600
 
-_BOOL_KEYS = ('auto_check_update',)
+_BOOL_KEYS = ('auto_check_update', 'auto_install')
 
 
 class Settings:

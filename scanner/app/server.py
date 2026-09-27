@@ -17,6 +17,8 @@
 import importlib.util
 import json
 import os
+import sys
+import threading
 import time
 import uuid
 
@@ -542,13 +544,14 @@ def get_settings():
         'settings': SETTINGS.get(),
         'checkInterval': settings_mod.CHECK_INTERVAL,
         'releasesUrl': upd.RELEASES_URL,
+        'selfUpdateAvailable': upd.self_update_available(),
     })
 
 
 @app.post('/api/settings')
 @AUTH.require(*auth_mod.CAN_WRITE)
 def set_settings():
-    """改本机设置（目前只有「自动检查更新」这一个开关）。"""
+    """改本机设置（自动检查更新 / 自动安装两个开关）。"""
     body = request.get_json(silent=True) or {}
     try:
         s = SETTINGS.patch(body)
@@ -569,13 +572,91 @@ def check_update():
     cached = cur.get('last_result')
     fresh = (time.time() - float(cur.get('last_check') or 0)) < settings_mod.CHECK_INTERVAL
     if not force and isinstance(cached, dict) and cached.get('ok') and fresh:
-        return jsonify(dict(cached, cached=True, checkedAt=int(cur.get('last_check') or 0)))
+        return jsonify(dict(cached, cached=True, checkedAt=int(cur.get('last_check') or 0),
+                            selfUpdateAvailable=upd.self_update_available(),
+                            autoInstall=bool(cur.get('auto_install')),
+                            download=upd.download_state()))
 
     res = upd.check(APP_VERSION)
     if res.get('ok'):
         # 只缓存成功的查询 —— 断网时的失败结果不该把用户锁在「查不到」里 6 小时
         SETTINGS.patch({'last_check': int(time.time()), 'last_result': res})
-    return jsonify(dict(res, cached=False, checkedAt=int(time.time()) if res.get('ok') else 0))
+        # 自动安装开启且真有新版本：后台下载+暂存（下载完若仍开启则自动落地重启）
+        if SETTINGS.get('auto_install') and res.get('hasUpdate'):
+            _maybe_auto_download(res.get('latest'))
+    return jsonify(dict(res, cached=False, checkedAt=int(time.time()) if res.get('ok') else 0,
+                        selfUpdateAvailable=upd.self_update_available(),
+                        autoInstall=bool(SETTINGS.get('auto_install')),
+                        download=upd.download_state()))
+
+
+def _maybe_auto_download(latest):
+    """自动安装开启时，后台拉一遍资产并开始下载+暂存。"""
+    if not upd.self_update_available():
+        return
+    assets = upd.list_assets()
+    if not assets.get('ok') or not latest:
+        return
+    def _on_done(version, src):
+        # 下载完若仍开着自动安装，直接触发落地重启（页面会自己重载）
+        if SETTINGS.get('auto_install'):
+            upd.trigger_install(DATA, src, version, list(sys.argv[1:]))
+    upd.start_download(DATA, assets['assets'], latest, on_done=_on_done)
+
+
+@app.post('/api/update/download')
+@AUTH.require(*auth_mod.CAN_WRITE)
+def update_download():
+    """手动触发下载+暂存最新版。返回是否新启动下载。自动安装开启时下载完会自动落地。"""
+    latest = (request.get_json(silent=True) or {}).get('version') or None
+    if not latest:
+        res = upd.check(APP_VERSION)
+        if not res.get('ok') or not res.get('hasUpdate'):
+            return jsonify({'ok': False, 'error': '没有可下载的新版本'})
+        latest = res.get('latest')
+    assets = upd.list_assets()
+    if not assets.get('ok'):
+        return jsonify({'ok': False, 'error': assets.get('error') or '查不到发布资产'})
+    if not upd.pick_asset(assets['assets'], upd.SELF_FLAVOR):
+        return jsonify({'ok': False, 'error': '找不到扫描端的免安装版资产'})
+    launched = upd.start_download(DATA, assets['assets'], latest, on_done=_auto_install_if_on)
+    return jsonify({'ok': True, 'launched': launched, 'download': upd.download_state()})
+
+
+def _auto_install_if_on(version, src):
+    if SETTINGS.get('auto_install'):
+        upd.trigger_install(DATA, src, version, list(sys.argv[1:]))
+
+
+@app.get('/api/update/progress')
+def update_progress():
+    """下载进度（前端轮询用）。"""
+    return jsonify(dict(upd.download_state(), ok=True))
+
+
+@app.post('/api/update/install')
+@AUTH.require(*auth_mod.CAN_WRITE)
+def update_install():
+    """把已暂存的版本落地并重启本服务（Windows 免安装版专用）。
+
+    实际替换文件发生在退出的 bootstrap 进程里（旧进程退出后才能覆盖 exe），
+    所以这里触发后会让本进程在极短时间内退出、由新版本接管。
+    """
+    if not upd.self_update_available():
+        return jsonify({'ok': False, 'error': '当前环境不支持自动安装（容器 / 源码 / 非 Windows）'})
+    st = upd.download_state()
+    src = st.get('src')
+    version = st.get('version')
+    if not src or not version:
+        return jsonify({'ok': False, 'error': '还没有下载好的更新（请先下载）'})
+    if not os.path.isdir(src):
+        return jsonify({'ok': False, 'error': '暂存目录缺失，请重新下载'})
+    ok = upd.trigger_install(DATA, src, version, list(sys.argv[1:]))
+    if not ok:
+        return jsonify({'ok': False, 'error': '发起安装失败（无法复制启动器）'})
+    # 给页面一点时间收到响应，再退出让 bootstrap 接管
+    threading.Timer(0.6, lambda: os._exit(0)).start()
+    return jsonify({'ok': True, 'restarting': True})
 
 
 @app.get('/api/me')

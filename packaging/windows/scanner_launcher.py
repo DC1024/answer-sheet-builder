@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import os
 import socket
+import subprocess
 import sys
 import threading
 import webbrowser
@@ -83,6 +84,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                    help="跳过手写 CNN，直接用纯 OpenCV 识别")
     p.add_argument("--no-browser", action="store_true", default=_env_flag("ASB_NO_BROWSER"),
                    help="只起服务，不自动打开浏览器")
+    # 内部使用：被「安装更新」的引导程序调用，落地更新后拉起新版本并退出，不启动服务
+    p.add_argument("--install-pending", action="store_true", default=False,
+                   help=argparse.SUPPRESS)
     return p.parse_args(argv)
 
 
@@ -136,10 +140,52 @@ def _banner(url: str, data: str, cnn: bool, db: str) -> None:
         print(url, flush=True)
 
 
+def _bootstrap_apply_and_relaunch(data: str) -> int:
+    """引导模式：旧服务已退出，把暂存的新版本落到安装目录，再拉起新版本后退出。
+
+    只在「被更新的那份 exe 已经不在运行」时才能覆盖文件（Windows 会锁住正在跑的 exe），
+    所以这个分支由 trigger_install 复制出来的 bootstrap 进程跑，而不是正在服务的进程。
+    """
+    from app import update as upd  # noqa: E402
+
+    p = upd.read_pending(data)
+    if not p:
+        return 0
+    items = p.get("items") or []
+    res = upd.apply_pending(data)
+    if not res.get("ok"):
+        print("落地更新失败：%s" % res.get("error"), flush=True)
+        return 1
+    print("已落地更新：%s，正在拉起新版本…" % res.get("version"), flush=True)
+    for it in items:
+        if it.get("flavor") == upd.SELF_FLAVOR:
+            try:
+                subprocess.Popen([it["install_exe"]] + list(it.get("launch_args") or []),
+                                 close_fds=True)
+            except Exception as e:  # noqa: BLE001
+                print("拉起新版本失败：%s" % e, flush=True)
+            break
+    return 0
+
+
 def main(argv=None) -> int:
     _force_utf8_stdio()
     args = parse_args(argv)
     data = _prepare_env(args)
+
+    # 引导模式：只落地更新 + 拉起新版本，不启动当前服务
+    if args.install_pending:
+        return _bootstrap_apply_and_relaunch(data)
+
+    # 正常启动：若上次更新留下 pending 且本进程不是「要被更新的那份」，先落地
+    # （正常双击启动通常是 no-op；真正的落地发生在上面的引导分支里）
+    try:
+        from app import update as upd  # noqa: E402
+        res = upd.apply_pending(data)
+        if res.get("applied"):
+            print("已应用待更新：%s" % res.get("version"), flush=True)
+    except Exception as e:  # noqa: BLE001
+        print("应用待更新失败：%s" % e, flush=True)
 
     cnn_on = not args.no_cnn
 
