@@ -162,6 +162,34 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 .chip.fixed { outline:2px solid #c0271f; color:#c0271f; }
 .qby { font-size:11px; color:var(--mut); margin-left:6px; }
 
+/* ---- 工作台：主观题（人工阅卷） ---- */
+/* 主观题没有「机器读 A/B/C/D」可核，核心是「对着作答区给分」，
+   所以单独一组卡片，每张卡自带这道题的裁剪作答区缩略图。 */
+.subsec-hd{font-size:12px;color:var(--mut);margin:2px 0 8px;}
+.subsec-hd b{color:var(--fg);}
+.subcard{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px;background:#fbfcfe;}
+.subcard.on{border-color:#2b6cb0;box-shadow:0 0 0 2px #dbe9f8;background:#fff;}
+.subcard .shd{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px;}
+.subcard .shd b{font-size:13px;}
+.subcard .shd .hint{margin:0;}
+.subcard .scrop{max-width:100%;max-height:150px;display:block;border:1px solid var(--line);
+  border-radius:6px;background:#fff;cursor:zoom-in;}
+.subcard .scrop.na{display:none;}
+.subcard .simghint{font-size:11px;color:var(--mut);margin:2px 0 0;}
+.subcard .ssubs{display:flex;flex-direction:column;gap:2px;margin-top:4px;}
+.subcard .ssubs .qrow{margin:0;}
+.subcard .stot{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums;}
+.subcard .stot.done{color:#1c7c33;}
+.subcard .stot.zero{color:#b3261e;}
+.subcard .stot.none{color:var(--mut);font-weight:400;}
+.subin{width:74px;text-align:right;font-variant-numeric:tabular-nums;padding:3px 4px;}
+.subin.full{background:#eaf7ee;border-color:#9ed3ae;}
+.gbseg{display:inline-flex;}
+.gbseg button{border-radius:0;padding:3px 10px;font-size:12px;margin-left:-1px;}
+.gbseg button:first-child{border-top-left-radius:6px;border-bottom-left-radius:6px;margin-left:0;}
+.gbseg button:last-child{border-top-right-radius:6px;border-bottom-right-radius:6px;}
+.gbseg button.on{background:#2b6cb0;color:#fff;border-color:#2b6cb0;position:relative;z-index:1;}
+
 /* ---- 工作台：左边逐题改答案 / 右边原卷校对图（可缩放、可拖动） ---- */
 #gbModal .box{max-width:1120px;}
 .gbwrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,430px);gap:14px;margin-top:10px;align-items:start;}
@@ -423,8 +451,8 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
   <div id="gbModalBody"></div>
   <div class="row" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
     <label class="f"><input type="checkbox" id="gbReview"> 标记待复核</label>
-    <label class="f">复核分（可选，覆盖逐题折算） <input type="number" id="gbManual" style="width:80px" min="0"></label>
-    <label class="f">折算预览 <b id="gbPreview"></b></label>
+    <label class="f">复核分（可选，覆盖客观＋主观合计） <input type="number" id="gbManual" style="width:80px" min="0" step="0.5"></label>
+    <label class="f"><span id="gbPreviewKind">合计预览</span> <b id="gbPreview"></b></label>
   </div>
   <div class="row"><textarea id="gbNote" placeholder="备注（可选）"></textarea></div>
   <div class="row"><button id="gbSave">保存复核</button>
@@ -1049,36 +1077,102 @@ $('#btnLogout').onclick = async () => {
 };
 
 // ============================================================ ⑥ 阅卷工作台
-let GB = {rows: [], qnos: [], key: {}, hasKey: false, summary: {}};
-let GEDIT = null;          // 当前正在编辑的考生（含 stu / total / sid / overrides）
+let GB = {rows: [], qnos: [], key: {}, hasKey: false, summary: {}, rules: {},
+          subjective: {}, max: {auto: 0, subjective: 0, total: 0}};
+let GEDIT = null;          // 当前正在编辑的考生（含 stu / total / sid / overrides / scores / subs）
+let GBIMG = {mode: 'page', q: null, pid: null, pageIdx: null, lastQ: null};   // 右侧看图器状态
+// lastQ = 最近看过的那道主观题。切到「整页校对」时 q 会被清成 null，
+// 这时候再点「当前题裁剪」得知道回哪一题 —— 否则按钮点了没反应（老师只会觉得"坏了"）。
 
 async function loadGradebook(){
   const r = await apijson('/api/gradebook?' + qid());
   if (!r.students){ $('#gbBody').innerHTML = '<div class="empty">还没有识别结果，先去②批量上传</div>'; return; }
   GB = {rows: r.students || [], qnos: r.qnos || [], key: r.key || {},
-        hasKey: !!r.hasKey, summary: r.summary || {}, rules: r.rules || {}};
+        hasKey: !!r.hasKey, summary: r.summary || {}, rules: r.rules || {},
+        subjective: r.subjective || {}, max: r.max || {auto: 0, subjective: 0, total: 0}};
   renderGradebook();
 }
 
-// 折算某份卷子在「人工复核」叠加后的对题数 / 复核分（与 stats.score_grading 同算法）
-function gbEffective(stu, grading){
-  grading = grading || {};
-  const ov = grading.overrides || {};
-  let eff = 0, total = 0;
+// 分数一律留两位：0.1+0.2 那种浮点尾巴不该出现在老师眼前
+const round2 = v => { const n = +v; return isFinite(n) ? Math.round(n * 100) / 100 : 0; };
+
+// 主观题（模板里填了「满分」的题）：{题号: {points, subs, page, region}}
+const subInfo = q => (GB.subjective || {})[String(q)] || null;
+const hasSubjectives = () => Object.keys(GB.subjective || {}).length > 0;
+// 这道主观题在第几面（找裁剪图要用）
+const subPageOf = q => { const i = subInfo(q); return (i && i.page != null) ? i.page : null; };
+// 逐题满分：配了规则取规则的 points，否则有标准答案就是 1 分，两者都没有 = 不参与计分
+function qMax(q){
+  const role = (GB.rules || {})[String(q)];
+  if (role) return +role.points || 0;
+  return GB.key[q] ? 1 : 0;
+}
+
+// 客观分 —— 与扫描端 scoring.apply_rules 同口径：
+// 改判（对/错）优先，其余用服务端算好的逐题分（含规则/漏选半对/倒扣）。
+// 为什么要复用服务端的 per_q 而不是自己重算：规则引擎那套（七选三阶梯、倒扣）
+// 在前端再实现一遍，迟早会和扫描端分叉 —— 那正是老师最不能接受的那种错。
+function gbObjective(stu, grading){
+  const ov = (grading && grading.overrides) || {};
+  const per = stu.per_q || {};
+  let got = 0, max = 0;
   for (const q of (GB.qnos || [])){
-    const kv = GB.key[q];
-    if (!kv) continue;
-    total++;
-    const c = (String(q) in ov) ? !!ov[String(q)] : (((stu.answers || {})[q] || {}).answer === kv);
-    if (c) eff++;
+    const k = String(q);
+    if ((per[k] || {}).subjective) continue;      // 主观题不算在这一路
+    if (!GB.rules[k] && !GB.key[q]) continue;     // 既不参与计分的题
+    const mx = qMax(q);
+    max += mx;
+    if (k in ov) got += ov[k] ? mx : 0;
+    else got += (typeof (per[k] || {}).score === 'number') ? per[k].score : 0;
   }
-  const ms = grading.manualScore;
-  return (typeof ms === 'number') ? ms : eff;
+  return {got: round2(got), max: round2(max)};
+}
+
+// 主观题得分：有子问就逐项算（各自夹到该子问满分），否则整题一个分（夹到满分）。
+// 夹取口径与扫描端 scoring.subjective_score 一致 —— 老师手滑多打一位不该把总分炸掉。
+function subValue(q, grading){
+  const info = subInfo(q);
+  if (!info) return 0;
+  const g = grading || {};
+  const subs = info.subs || [];
+  if (subs.length){
+    const vals = (g.subs || {})[String(q)] || [];
+    return subs.reduce((s, sd, i) => {
+      const v = +vals[i] || 0;
+      return s + Math.min(Math.max(v, 0), +sd.points || 0);
+    }, 0);
+  }
+  const v = +(g.scores || {})[String(q)] || 0;
+  return Math.min(Math.max(v, 0), +info.points || 0);
+}
+
+function gbSubjective(stu, grading){
+  const g = grading || {};
+  let got = 0, max = 0;
+  for (const q of (GB.qnos || [])){
+    const info = subInfo(q);
+    if (!info) continue;
+    max += +info.points || 0;
+    got += subValue(q, g);
+  }
+  return {got: round2(got), max: round2(max)};
+}
+
+// 一份卷子在当前面板状态下的得分拆解（客观 / 主观 / 总分）
+function gbTotals(stu, grading){
+  const o = gbObjective(stu, grading), s = gbSubjective(stu, grading);
+  const ms = grading && grading.manualScore;
+  const manual = (typeof ms === 'number' && isFinite(ms));
+  return {obj: o.got, objMax: o.max, sub: s.got, subMax: s.max,
+          total: round2(manual ? ms : o.got + s.got), grand: round2(o.max + s.max), manual};
 }
 
 function renderGradebook(){
   const sum = GB.summary || {};
-  $('#gbSum').textContent = `共 ${sum.count || 0} 人 · 已复核 ${sum.graded || 0} · 待复核 ${sum.review || 0} · 平均 ${sum.avg != null ? sum.avg : 0} 分`;
+  const mx = GB.max || {auto: 0, subjective: 0, total: 0};
+  const hasSub = (mx.subjective || 0) > 0;
+  $('#gbSum').textContent = `共 ${sum.count || 0} 人 · 已复核 ${sum.graded || 0} · 待复核 ${sum.review || 0} · 平均 ${sum.avg != null ? sum.avg : 0} 分`
+    + (hasSub ? `　|　满分：客观 ${mx.auto} ＋ 主观 ${mx.subjective} ＝ ${mx.total}` : '');
   const q = ($('#gbSearch').value || '').trim();
   const onlyReview = $('#gbReviewOnly').checked;
   const rows = (GB.rows || []).filter(s => {
@@ -1087,13 +1181,25 @@ function renderGradebook(){
     return true;
   });
   if (!rows.length){ $('#gbBody').innerHTML = '<div class="empty">没有匹配的卷子</div>'; return; }
-  $('#gbBody').innerHTML = `<table><thead><tr>
-    <th>考号</th><th>姓名</th><th>班级</th><th class="num">原始分</th>
-    <th class="num">复核分</th><th>标注</th><th>操作</th></tr></thead><tbody>
+  // 有主观题时分三列（客观/主观/总分），老师才看得出「这 88 分里 20 分是解答题」；
+  // 纯选择题卷子保持原来的两列，老用户的习惯不变。
+  const head = hasSub
+    ? '<th>考号</th><th>姓名</th><th>班级</th><th class="num">客观分</th><th class="num">主观分</th>'
+      + '<th class="num">总分</th><th>标注</th><th>操作</th>'
+    : '<th>考号</th><th>姓名</th><th>班级</th><th class="num">原始分</th><th class="num">复核分</th>'
+      + '<th>标注</th><th>操作</th>';
+  const cells = s => {
+    if (!hasSub) return `<td class="num">${GB.hasKey ? s.auto + '/' + mx.auto : '—'}</td>
+      <td class="num">${(GB.hasKey || mx.total) ? s.effective + '/' + mx.auto : '—'}</td>`;
+    const subTxt = s.sub + '/' + mx.subjective;
+    return `<td class="num">${s.obj}/${mx.auto}</td>`
+      + `<td class="num">${s.sub > 0 ? subTxt : '<span class="hint">' + subTxt + '</span>'}</td>`
+      + `<td class="num"><b>${s.effective}/${mx.total}</b></td>`;
+  };
+  $('#gbBody').innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>
     ${rows.map(s => `<tr>
       <td>${esc(s.sid)}</td><td>${esc(s.name || '')}</td><td>${esc(s.cls || '')}</td>
-      <td class="num">${GB.hasKey ? s.auto + '/' + s.total : '—'}</td>
-      <td class="num">${GB.hasKey ? s.effective + '/' + s.total : '—'}</td>
+      ${cells(s)}
       <td>${(s.grading.review ? '<span class="badge warn">待复核</span>' : '')}${(s.grading.note ? '<span class="badge info">有备注</span>' : '')}${(s.fixedQnos && s.fixedQnos.length ? '<span class="fixmark">人工修正</span>' : '')}${paperSchemeBadge(s.answers)}</td>
       <td><button class="ghost" data-sid="${esc(s.sid)}">复核</button></td>
     </tr>`).join('')}</tbody></table>`;
@@ -1103,21 +1209,67 @@ function renderGradebook(){
 function openGrade(sid){
   const s = (GB.rows || []).find(x => String(x.sid) === String(sid));
   if (!s) return;
+  const g0 = s.grading || {};
+  // subs 要深拷：面板里改的是草稿，取消/关闭时不能污染 GB.rows 里那份服务端数据
   GEDIT = {sid: s.sid, stu: s, total: s.total,
-           overrides: Object.assign({}, (s.grading.overrides) || {}),
-           review: !!s.grading.review, note: s.grading.note || ''};
+           overrides: Object.assign({}, g0.overrides || {}),
+           scores: Object.assign({}, g0.scores || {}),
+           subs: JSON.parse(JSON.stringify(g0.subs || {})),
+           manualScore: (typeof g0.manualScore === 'number') ? g0.manualScore : null,
+           review: !!g0.review, note: g0.note || ''};
   const ans = s.answers || {};
   const sidEdit = canWrite()
     ? `<div class="row gb-sid"><label class="f">卷面考号 <input id="gbSidEdit" value="${esc(s.sid)}" maxlength="40" style="width:170px"></label>
          <span class="hint">机器读错考号会把整份卷子归错人；改完即时生效</span></div>`
     : `<div class="row gb-sid"><span class="hint">卷面考号 <b>${esc(s.sid)}</b></span></div>`;
-  const key = GB.key || {};
+  const subQs = (GB.qnos || []).filter(q => subInfo(q));
+  const pages = (s.pages || []).filter(p => p && p.id);
+  // 这道主观题的裁剪图在不在：页记录 regions 里有这个题号才算数
+  // （老数据 / 当时写盘失败 / 模板刚换成带主观题的 → 没有，只能看整页）
+  const cropPageOf = q => {
+    const pg = pages.find(p => p.page === subPageOf(q));
+    return (pg && (pg.regions || []).map(String).indexOf(String(q)) >= 0) ? pg : null;
+  };
+  const subSection = subQs.length ? (() => {
+    const cards = subQs.map(q => {
+      const info = subInfo(q);
+      const pts = +info.points || 0;
+      const subs = info.subs || [];
+      const cp = cropPageOf(q);
+      const rows = subs.length
+        ? subs.map((sd, i) => `<div class="qrow">
+            <span class="qno">小问 ${esc(sd.label || ('(' + (i + 1) + ')'))}</span>
+            <span class="qd">得分 <input type="number" class="subin" data-q="${q}" data-i="${i}"
+              min="0" max="${sd.points}" step="0.5"${canWrite() ? '' : ' disabled'}> / ${sd.points}</span>
+          </div>`).join('')
+        : `<div class="qrow"><span class="qno">本题得分</span>
+            <span class="qd"><input type="number" class="subin" data-q="${q}" data-i="-1"
+              min="0" max="${pts}" step="0.5"${canWrite() ? '' : ' disabled'}> / ${pts}</span>
+          </div>`;
+      return `<div class="subcard" data-subq="${q}">
+        <div class="shd"><b>第 ${q} 题</b><span class="badge info">人工阅卷</span>
+          <span class="hint">满分 ${pts}${subs.length ? '（' + subs.length + ' 个小问）' : ''}</span>
+          <span class="stot none" data-subtot="${q}"></span></div>
+        <img class="scrop${cp ? '' : ' na'}" data-subimg="${q}" alt="第 ${q} 题作答区"
+          ${cp ? `src="/api/region/${esc(cp.id)}/${q}.jpg"` : ''}>
+        <div class="simghint">${cp
+          ? `第 ${(cp.page != null ? cp.page + 1 : 1)} 面 · 点图或卡片 → 右侧放大看`
+          : '这批扫描件没有存这道题的裁剪图（旧数据 / 写盘失败）—— 请对着右侧整页校对'}</div>
+        <div class="ssubs">${rows}</div>
+      </div>`;
+    }).join('');
+    return `<div class="subsec-hd"><b>主观题（人工阅卷）</b> —— 满分 ${subQs.reduce((n, q) => n + (+subInfo(q).points || 0), 0)} 分，
+      对着作答区给分；两个模式由模板决定：设了小问就按小问给，否则整题给一个分
+      ${canWrite() ? '' : '（当前账号只读，看不到保存按钮）'}</div>${cards}`;
+  })() : '';
   let body;
-  if (!GB.hasKey){
+  if (!GB.hasKey && !subQs.length){
     body = '<div class="hint" style="padding:12px 0">请先在④汇总统计里填好「标准答案」，才能逐题复核。</div>';
   } else {
-    body = `<div class="gbq-hd">逐题改答案（人工修正）→ 同步进分布统计 / 导出 / 判分；机器原读标红，改完即记一次修正</div>`
-      + '<div class="gbq">' + (GB.qnos || []).map(q => {
+    // 客观题列表：主观题从这里排除（它们没有「机器读 A/B/C/D」可核，走上面的打分卡）
+    const objHtml = !GB.hasKey ? '' :
+      `<div class="gbq-hd">逐题改答案（人工修正）→ 同步进分布统计 / 导出 / 判分；机器原读标红，改完即记一次修正</div>`
+      + '<div class="gbq">' + (GB.qnos || []).filter(q => !subInfo(q)).map(q => {
       const a = ans[String(q)] || ans[q] || {};
       const det = a.answer ? a.answer : '未填';
       const isFix = a.by === 'fix' || (s.fixedQnos || []).indexOf(+q) >= 0 || (s.fixedQnos || []).indexOf(String(q)) >= 0;
@@ -1138,21 +1290,39 @@ function openGrade(sid){
         ${isFix ? '<span class="fixmark">已人工修正</span>' : ''}
       </div>`;
     }).join('') + '</div>';
+    body = subSection + objHtml + (subQs.length && GB.hasKey ? '<div style="height:8px"></div>' : '');
   }
-  // 右边：这个考生的原卷校对图（识别时逐页落盘，/api/overlay/<id>.png 取）
-  const imgPages = (s.pages || []).filter(p => p && p.overlay && p.id);
+  // 右边：这个考生的原卷图 —— 默认显示「当前主观题的裁剪作答区」，可一键切回整页。
+  // 裁剪图是识别时按 rid + 题号落盘的（/api/region/<rid>/<题号>.jpg），
+  // 整页用校对图（/api/overlay/<rid>.png）—— 那张图上还画了框和墨迹值，对着整页核更直观。
+  const firstSub = subQs.length ? subQs[0] : null;
+  const firstCrop = firstSub != null ? cropPageOf(firstSub) : null;
+  GBIMG = firstCrop
+    ? {mode: 'crop', q: firstSub, lastQ: firstSub, pid: firstCrop.id, pageIdx: firstCrop.page}
+    : {mode: 'page', q: null, lastQ: firstSub, pid: pages.length ? pages[0].id : null,
+       pageIdx: pages.length ? pages[0].page : null};
+  const seg = subQs.length ? `
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="gbseg" id="gbSeg">
+          <button data-gbmode="crop"${GBIMG.mode === 'crop' ? ' class="on"' : ''}>当前题裁剪</button>
+          <button data-gbmode="page"${GBIMG.mode === 'page' ? ' class="on"' : ''}>整页校对</button>
+        </span>
+        <span class="hint" style="margin:0">点左侧主观题卡片可把右侧切到那一题</span>
+      </div>` : '';
+  const pageBtns = pages.length > 1 ? `<div class="gbpages" id="gbPages">${pages.map(p =>
+      `<button class="ghost" data-pid="${esc(p.id)}" data-pidx="${p.page}">第${(p.page != null ? p.page + 1 : 1)}面</button>`).join('')}</div>` : '';
   const imgPane = `<div class="gbimgcol">
       <div class="gbimgtools">
-        <b style="font-size:13px">原卷校对图</b><span style="flex:1"></span>
+        <b style="font-size:13px">${subQs.length ? '阅卷图' : '原卷校对图'}</b><span style="flex:1"></span>
         <button class="ghost" id="gbZoomOut">缩小</button>
         <button class="ghost" id="gbZoomIn">放大</button>
         <button class="ghost" id="gbFit">适应</button>
         <button class="ghost" id="gbReset">1:1</button>
       </div>
-      ${imgPages.length ? `<div class="gbpages" id="gbPages">${imgPages.map((p, i) =>
-          `<button class="ghost${i ? '' : ' on'}" data-pid="${esc(p.id)}">第${(p.page != null ? p.page + 1 : 1)}面</button>`).join('')}</div>
-        <div id="gbImgBox"><img id="gbImg" src="/api/overlay/${esc(imgPages[0].id)}.png" alt="原卷校对图"></div>
-        <div class="hint">滚轮缩放 · 按住图片拖动移动 · 双击复位</div>`
+      ${seg}
+      ${pageBtns}
+      ${pages.length ? `<div id="gbImgBox"><img id="gbImg" alt="阅卷图"></div>
+        <div class="hint" id="gbImgHint"></div>`
         : '<div class="hint" style="padding:16px 0">这个考生没有可用的校对图（这批可能是重传覆盖过的，或当时写盘失败）。</div>'}
     </div>`;
   // body 本身是「.gbq-hd + .gbq」两个同级元素 —— 必须再包一层，否则 .gbwrap 这个
@@ -1166,7 +1336,44 @@ function openGrade(sid){
   $$('#gbModalBody select[data-q]').forEach(sel => sel.onchange = updateGbPreview);
   $('#gbManual').oninput = updateGbPreview;
   $$('#gbModalBody input.fixin').forEach(inp => inp.onchange = onFixAnswer);
-  // 校对图查看器：滚轮/按钮缩放 + 按住拖动平移 + 双击复位
+
+  // 主观题给分输入：值从 GEDIT 回填（不写进 HTML，免得分数被当成字符串拼进属性）
+  $$('#gbModalBody input.subin').forEach(inp => {
+    const q = inp.dataset.q, i = +inp.dataset.i;
+    inp.value = subDraft(q, i);
+    inp.oninput = () => {
+      setSubDraft(q, i, inp.value);
+      inp.classList.toggle('full', +inp.value >= +inp.max && +inp.max > 0);
+      updateGbPreview();
+    };
+    inp.classList.toggle('full', +inp.value >= +inp.max && +inp.max > 0);
+  });
+  // 点主观题卡片（或它的裁剪图）→ 右侧切到这一题；再点一次「整页校对」就回整页
+  $$('#gbModalBody .subcard').forEach(card => {
+    const q = +card.dataset.subq;
+    const pick = () => {
+      const mode = GBIMG.mode === 'crop' && GBIMG.q === q ? 'page' : 'crop';
+      setGbImg(mode, q);
+      $$('#gbModalBody .subcard').forEach(c => c.classList.toggle('on', +c.dataset.subq === q));
+    };
+    card.onclick = e => {
+      // 在分数输入框里点来点去不该顺手把右边图切走 —— 那个区域一律放过
+      if (e.target.closest && e.target.closest('.ssubs')) return;
+      pick();
+    };
+    const im = card.querySelector('.scrop');
+    if (im) im.onclick = e => { e.stopPropagation(); pick(); };
+  });
+  // 「当前题裁剪」在整页模式下要知道回哪一题（GBIMG.lastQ），不能传 null 白点一下
+  $$('#gbSeg button').forEach(b => b.onclick = () => {
+    const mode = b.dataset.gbmode;
+    const q = GBIMG.q != null ? GBIMG.q : (GBIMG.lastQ != null ? GBIMG.lastQ : subQs[0]);
+    setGbImg(mode, q);
+    if (mode === 'crop')
+      $$('#gbModalBody .subcard').forEach(c => c.classList.toggle('on', +c.dataset.subq === q));
+  });
+
+  // 阅卷图查看器：滚轮/按钮缩放 + 按住拖动平移 + 双击复位
   const gbox = $('#gbImgBox'), gimg = $('#gbImg');
   if (gbox && gimg){
     const V = {s: 1, x: 0, y: 0};
@@ -1177,15 +1384,25 @@ function openGrade(sid){
       V.x = cx - (cx - V.x) * k; V.y = cy - (cy - V.y) * k; V.s = ns;
       apply();
     };
+    // 裁剪图默认 1:1（够大才看得清字，宽出去的用拖动看）；
+    // 整页默认「适应」（整张卷子先看全局，再放大）。两边的默认值不一样是有意的。
     const fit = () => {
-      V.s = 1; V.x = 0; V.y = 0;
+      V.x = 0; V.y = 0;
       const bw = gbox.clientWidth, bh = gbox.clientHeight;
-      if (gimg.naturalWidth && bw && bh){
-        V.s = Math.min(bw / gimg.naturalWidth, bh / gimg.naturalHeight);
-      }
+      if (!gimg.naturalWidth || !bw || !bh){ V.s = 1; apply(); return; }
+      V.s = GBIMG.mode === 'crop'
+        ? Math.min(4, Math.max(1, bw / gimg.naturalWidth))
+        : Math.min(bw / gimg.naturalWidth, bh / gimg.naturalHeight);
       apply();
     };
     gimg.onload = fit;
+    gimg.onerror = () => {
+      gimg.style.visibility = 'hidden';
+      const h = $('#gbImgHint');
+      if (h) h.textContent = '这张图取不到（文件可能已被清理）—— 试试上面切「整页校对」。';
+    };
+    // 切图/切模式：由 setGbImg 统一改 src，这里只负责把新图复位到默认缩放
+    GBIMG.reset = () => { gimg.style.visibility = ''; V.s = 1; V.x = 0; V.y = 0; apply(); };
     gbox.addEventListener('wheel', e => {
       e.preventDefault();
       const r = gbox.getBoundingClientRect();
@@ -1214,20 +1431,88 @@ function openGrade(sid){
     if (zout) zout.onclick = () => zoomAt(1 / 1.25, gbox.clientWidth / 2, gbox.clientHeight / 2);
     if (zfit) zfit.onclick = fit;
     if (zreset) zreset.onclick = () => { V.s = 1; V.x = 0; V.y = 0; apply(); };
+    // 逐面按钮：整页模式切面；裁剪模式切到该面的第一道主观题
     $$('#gbPages button').forEach(b => b.onclick = () => {
-      $$('#gbPages button').forEach(x => x.classList.remove('on'));
-      b.classList.add('on');
-      gimg.src = '/api/overlay/' + b.dataset.pid + '.png';
-      V.s = 1; V.x = 0; V.y = 0; apply();
+      const pidx = +b.dataset.pidx;
+      const onPage = subQs.filter(q => subPageOf(q) === pidx);
+      if (GBIMG.mode === 'crop' && onPage.length) setGbImg('crop', onPage[0]);
+      else {
+        GBIMG.pid = b.dataset.pid; GBIMG.pageIdx = pidx;
+        setGbImg('page', null);
+      }
     });
-    if (gimg.complete && gimg.naturalWidth) fit();
   }
   const sidInp = $('#gbSidEdit');
   if (sidInp) sidInp.onchange = onFixSid;
+  renderGbImg();          // 首图：有主观题裁剪图就默认显示它，否则整页
+  $$('#gbModalBody .subcard').forEach(c => c.classList.toggle('on', GBIMG.mode === 'crop' && +c.dataset.subq === GBIMG.q));
   updateGbPreview();
   $('#gbModal').classList.add('on');
 }
 
+// 主观题草稿读写：小问模式存在 GEDIT.subs[题号]（数组），整题模式存在 GEDIT.scores[题号]
+function subDraft(q, i){
+  const k = String(q);
+  if (i < 0) return (k in (GEDIT.scores || {})) ? GEDIT.scores[k] : '';
+  const arr = (GEDIT.subs || {})[k] || [];
+  return (i < arr.length && arr[i] != null) ? arr[i] : '';
+}
+function setSubDraft(q, i, raw){
+  const k = String(q);
+  const v = (raw === '' ? null : Number(raw));
+  if (i < 0){
+    if (v == null || !isFinite(v)) delete GEDIT.scores[k]; else GEDIT.scores[k] = v;
+    return;
+  }
+  if (!GEDIT.subs[k]) GEDIT.subs[k] = [];
+  GEDIT.subs[k][i] = v;
+}
+
+// 右侧阅卷图：mode='crop'（当前主观题裁剪）/ 'page'（整页校对）
+// 注意：这里一律【原地改 GBIMG】而不是换成新对象 —— 看图器把默认缩放的复位钩子
+// （GBIMG.reset）挂在当前这个对象上，一换对象那个钩子就没了，切图后缩放会留在上一张。
+function setGbImg(mode, q){
+  if (!GEDIT) return;
+  const pages = ((GEDIT.stu || {}).pages || []).filter(p => p && p.id);
+  const info = q != null ? subInfo(q) : null;
+  if (mode === 'crop' && info){
+    const pg = pages.find(p => p.page === info.page);
+    const has = pg && (pg.regions || []).map(String).indexOf(String(q)) >= 0;
+    if (has){ Object.assign(GBIMG, {mode: 'crop', q: q, lastQ: q, pid: pg.id, pageIdx: pg.page}); }
+    else {
+      // 没有裁剪图（旧数据 / 写盘失败）→ 老老实实退回整页，并说清楚原因
+      const p0 = pg || pages[0];
+      Object.assign(GBIMG, {mode: 'page', q: null,
+        pid: p0 ? p0.id : null, pageIdx: p0 ? p0.page : null});
+      toast('这道题没有裁剪图（旧数据或写盘失败），已显示整页');
+    }
+  } else {
+    const p0 = pages.find(p => p.id === GBIMG.pid) || pages[0];
+    Object.assign(GBIMG, {mode: 'page', q: null,
+      pid: p0 ? p0.id : null, pageIdx: p0 ? p0.page : null});
+  }
+  renderGbImg();
+}
+
+function renderGbImg(){
+  const gimg = $('#gbImg');
+  if (!gimg || !GBIMG.pid) return;
+  const crop = GBIMG.mode === 'crop' && GBIMG.q != null;
+  gimg.src = crop ? `/api/region/${GBIMG.pid}/${GBIMG.q}.jpg` : `/api/overlay/${GBIMG.pid}.png`;
+  const pgs = ((GEDIT && GEDIT.stu && GEDIT.stu.pages) || []);
+  const cur = pgs.find(p => p.id === GBIMG.pid) || {};
+  const hint = $('#gbImgHint');
+  if (hint) hint.textContent = (crop
+    ? `第 ${GBIMG.q} 题作答区（第 ${(cur.page != null ? cur.page + 1 : 1)} 面）`
+    : `整页校对图（第 ${(cur.page != null ? cur.page + 1 : 1)} 面）`)
+    + ' · 滚轮缩放 · 按住拖动移动 · 双击复位';
+  $$('#gbSeg button').forEach(b => b.classList.toggle('on', b.dataset.gbmode === GBIMG.mode));
+  $$('#gbPages button').forEach(b => b.classList.toggle('on', +b.dataset.pidx === GBIMG.pageIdx));
+  if (typeof GBIMG.reset === 'function') GBIMG.reset();
+}
+
+// 面板里改任何东西（改判下拉 / 主观题给分 / 复核分）都走这里重算合计：
+// 草稿只活在 GEDIT 上，关掉弹窗就丢 —— 不点「保存复核」绝不落盘。
 function updateGbPreview(){
   if (!GEDIT) return;
   const overrides = {};
@@ -1235,10 +1520,39 @@ function updateGbPreview(){
     if (sel.value === 'correct') overrides[sel.dataset.q] = true;
     else if (sel.value === 'wrong') overrides[sel.dataset.q] = false;
   });
-  const grading = Object.assign({}, GEDIT, {overrides,
-    manualScore: ($('#gbManual').value.trim() === '' ? null : Number($('#gbManual').value))});
-  const eff = gbEffective(GEDIT.stu, grading);
-  $('#gbPreview').textContent = String(eff) + (GB.hasKey ? (' / ' + GEDIT.total) : '');
+  const raw = $('#gbManual').value.trim();
+  const ms = raw === '' ? null : Number(raw);
+  GEDIT.manualScore = (ms != null && isFinite(ms)) ? ms : null;
+  const grading = {overrides, scores: GEDIT.scores, subs: GEDIT.subs, manualScore: GEDIT.manualScore};
+
+  // 每张主观题卡片右上角的「本题得分」小计：边打边看，免得在小问里迷路
+  $$('#gbModalBody .subcard').forEach(card => {
+    const q = +card.dataset.subq;
+    const info = subInfo(q);
+    if (!info) return;
+    const el = card.querySelector('[data-subtot]');
+    if (!el) return;
+    const mx = round2(+info.points || 0), v = round2(subValue(q, grading));
+    el.textContent = `${v} / ${mx}`;
+    el.classList.remove('done', 'zero', 'none');
+    if (!(mx > 0)) el.classList.add('none');
+    else if (v <= 0) el.classList.add('zero');
+    else if (v >= mx) el.classList.add('done');
+  });
+
+  const t = gbTotals(GEDIT.stu, grading);
+  const kind = $('#gbPreviewKind');
+  const pv = $('#gbPreview');
+  if (hasSubjectives()){
+    // 有主观题时把三块拆开写：老师要能一眼看出「88 分里有 20 分是我手打的」
+    if (kind) kind.textContent = t.manual ? '复核分生效' : '客观＋主观';
+    pv.textContent = t.manual
+      ? `${t.total} / ${t.grand}（复核分覆盖，原本 客观 ${t.obj} ＋ 主观 ${t.sub}）`
+      : `客观 ${t.obj} ＋ 主观 ${t.sub} ＝ ${t.total} / ${t.grand}`;
+  } else {
+    if (kind) kind.textContent = GB.hasKey ? '折算预览' : '';
+    pv.textContent = String(t.total) + (GB.hasKey ? (' / ' + t.grand) : '');
+  }
 }
 
 async function saveGrade(){
@@ -1249,9 +1563,19 @@ async function saveGrade(){
     else if (sel.value === 'wrong') overrides[sel.dataset.q] = false;
   });
   const manualRaw = $('#gbManual').value.trim();
+  const manualScore = manualRaw === '' ? null : Number(manualRaw);
+  // scores / subs 只提交真正打过分的题：没打分的留空，服务端才知道它是「0 分」还是「还没阅」
+  const scores = {};
+  for (const [k, v] of Object.entries(GEDIT.scores || {}))
+    if (v != null && isFinite(+v)) scores[k] = +v;
+  const subs = {};
+  for (const [k, v] of Object.entries(GEDIT.subs || {})){
+    if (!Array.isArray(v)) continue;
+    if (v.some(x => x != null && x !== '')) subs[k] = v.map(x => (x == null || x === '' ? 0 : +x));
+  }
   const grading = {
-    overrides,
-    manualScore: manualRaw === '' ? null : Number(manualRaw),
+    overrides, scores, subs,
+    manualScore: (manualScore != null && isFinite(manualScore)) ? manualScore : null,
     review: $('#gbReview').checked,
     note: $('#gbNote').value,
   };

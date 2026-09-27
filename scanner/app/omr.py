@@ -104,7 +104,72 @@ def template_summary(tpl):
         'questionCount': tpl.get('questionCount') or sum(len(p.get('questions', [])) for p in pages),
         'questionNumbers': sorted({q['no'] for p in pages for q in p.get('questions', [])}),
         'sid': ({'digits': sid_digits, 'pages': sid_pages} if sid_pages else None),
+        'subjective': subjective_map(tpl),
     }
+
+
+def _points(v):
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    return n if n > 0 else 0.0
+
+
+def subjective_map(tpl, page_idx=None):
+    """纳入人工阅卷的题：{题号: {'points', 'subs', 'region', 'page'}}。
+
+    「主观题」不是一个新题型，而是**任意作答块的一个属性**：制卡端给某道题填了
+    「满分」（或给它的小问填了满分），这道题就进这张表。所以这里不认 block 类型，
+    只认 points / subs —— 解答题、填空题、以后任何新块都走同一条路。
+
+    满分口径：**设了小问就取小问之和**，否则取整题 points（与制卡端 gradeTotalPoints
+    同一条规则）。两边必须一致，否则老师看到的分母会和扫描端算出来的不一样。
+
+    page_idx 给了就只取那一面（识别时按页裁剪要用），不给就整卷。
+    """
+    out = {}
+    for pi, p in enumerate(tpl.get('pages') or []):
+        pidx = p.get('index', pi)
+        if page_idx is not None and pidx != page_idx:
+            continue
+        for q in (p.get('questions') or []):
+            if not isinstance(q, dict) or 'no' not in q:
+                continue
+            subs = []
+            for s in (q.get('subs') or []):
+                if not isinstance(s, dict):
+                    continue
+                sp = _points(s.get('points'))
+                if sp > 0:
+                    subs.append({'label': str(s.get('label') or ''), 'points': sp})
+            pts = sum(s['points'] for s in subs) if subs else _points(q.get('points'))
+            if pts <= 0:
+                continue
+            out[_qno(q['no'])] = {'points': round(pts, 4), 'subs': subs,
+                                  'region': q.get('region') or None, 'page': pidx}
+    return out
+
+
+def region_crop(warp, region, px_per_mm, pad_mm=1.5):
+    """按模板里的 region（mm，中心点 + 宽高）从矫正图上裁出该题的作答区。
+
+    与 decode_write 的取样口径一致；越界的部分夹到图内（老师宁可看到半张，
+    也好过整块空白 —— 裁出界通常意味着模板换了但没重传模板）。
+
+    pad_mm 默认留 1.5mm 余量：作答区边界正好压在框线上时，学生的字会顶到边缘，
+    没有一点余量看着像被切掉了。
+    """
+    h, w = warp.shape[:2]
+    cx, cy = region.get('x', 0) * px_per_mm, region.get('y', 0) * px_per_mm
+    pad = max(0.0, float(pad_mm or 0)) * px_per_mm
+    rx = max(1.0, region.get('w', 1) * px_per_mm / 2.0) + pad
+    ry = max(1.0, region.get('h', 1) * px_per_mm / 2.0) + pad
+    x0, x1 = max(0, int(round(cx - rx))), min(w, int(round(cx + rx)) + 1)
+    y0, y1 = max(0, int(round(cy - ry))), min(h, int(round(cy + ry)) + 1)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return warp[y0:y1, x0:x1]
 
 
 def _template_quad(tpl, page_idx=0):
@@ -555,11 +620,15 @@ def engine_report(results):
 
 
 def recognize(image_bgr, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, gap=0.15,
-               overlay=True, cnn_model=None):
+               overlay=True, cnn_model=None, subjective=None):
     """完整识别流程：定位 → 矫正 → 采样 → 判定（含考号填涂区）
 
     cnn_model: 可选的手写 A-D CNN 模型（app.cnn_letter.load_model 返回值）。
     传入时手写作答题走「CNN 一选 + OpenCV 交叉验证」；None 时退化为纯 OpenCV。
+
+    subjective: subjective_map() 的结果。给了就把每题的主观题作答区裁出来
+    （JPEG 字节，放 out['regionJpg']），交给调用方落盘 —— 阅卷时老师看的就是它。
+    只有整卷模板里真有主观题才会传，普通纯选择题卷子这条链路完全不走。
     """
     quad, diag = detect_marks(image_bgr, tpl, page_idx)
     warp, px = warp_page(image_bgr, quad, tpl, px_per_mm, page_idx)
@@ -586,4 +655,20 @@ def recognize(image_bgr, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, gap=0.15,
         ok_, buf = cv2.imencode('.png', ov)
         if ok_:
             out['overlayPng'] = buf.tobytes()
+    if subjective:
+        # 主观题作答区裁剪：只裁这一面里、模板标了 region 的那些题。
+        # 用矫正原图（不是校对图）—— 校对图上画了圈和文字，会盖住学生的字。
+        shots = {}
+        for q in page.get('questions', []):
+            info = subjective.get(_qno(q['no']))
+            if not isinstance(info, dict) or not info.get('region'):
+                continue
+            crop = region_crop(warp, info['region'], px)
+            if crop is None or crop.size == 0:
+                continue
+            ok_, buf = cv2.imencode('.jpg', crop, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+            if ok_:
+                shots[str(_qno(q['no']))] = buf.tobytes()
+        if shots:
+            out['regionJpg'] = shots
     return out

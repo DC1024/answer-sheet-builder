@@ -16,6 +16,7 @@
 # 你那边再点一下统计就会算到我的班上。现在每次请求都从库里按 exam_id 取，串不了。
 import importlib.util
 import json
+import math
 import os
 import sys
 import threading
@@ -154,11 +155,13 @@ def _cnn_status():
 
 
 def _recognize_bytes(data, name, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, gap=0.15,
-                     cnn_model=None):
+                     cnn_model=None, subjective=None):
     """识别一张图 → (结果字典, answers)。识别失败时 answers 为 None。
 
     单张扫描和批量上传都走这里 —— 免得两条路各修一次、还修得不一样。
     cnn_model: 手写 A-D CNN（传 None 则 decode_write 退化为纯 OpenCV）。
+    subjective: omr.subjective_map(tpl) 的结果；给了就把主观题作答区裁出来落盘，
+    阅卷时老师看的就是那些小图（路径见 /api/region/<rid>/<题号>.jpg）。
 
     结果里带 `engine`（这份卷子用的哪套方案：rule / cnn / mixed）+ 每题 `by`
     （这一题谁定的音），answers 里也各存一份 —— 老师要据此对比两套方案的误判率，
@@ -167,10 +170,13 @@ def _recognize_bytes(data, name, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, g
     try:
         img = _decode(data)
         r = omr.recognize(img, tpl, page_idx=page_idx, px_per_mm=px_per_mm,
-                          fill_min=fill_min, gap=gap, cnn_model=cnn_model)
+                          fill_min=fill_min, gap=gap, cnn_model=cnn_model,
+                          subjective=subjective)
         rid = uuid.uuid4().hex[:12]
         png = r.pop('overlayPng', None)
         saved = _save_overlay(rid, png) if png else False
+        shots = r.pop('regionJpg', None) or {}
+        regions = _save_regions(rid, shots) if shots else []
         answers = {q['no']: {'answer': q['answer'], 'flag': q['flag'], 'best': q['best'],
                              'second': q['second'], 'ratios': q['ratios'], 'inks': q['inks'],
                              'by': q.get('by'), 'votes': q.get('votes') or {}}
@@ -178,10 +184,12 @@ def _recognize_bytes(data, name, tpl, page_idx=0, px_per_mm=8.0, fill_min=0.5, g
         if r.get('sid'):
             # 逐位坐标（x/y/w/h）是给 draw_overlay 用的，没必要发给浏览器
             r['sid'] = {k: r['sid'].get(k) for k in ('text', 'digits', 'ok', 'filled', 'flags')}
-        r.update({'id': rid, 'name': name, 'ok': True, 'overlay': saved})
+        r.update({'id': rid, 'name': name, 'ok': True, 'overlay': saved, 'regions': regions})
         if png and not saved:
             # 校对图存不下来不该让整份结果作废 —— 答案已经识别出来了
             r['overlayError'] = '校对图无法写入 data/（检查挂载目录是否存在且可写）'
+        if shots and len(regions) < len(shots):
+            r['regionError'] = '作答区裁剪图部分无法写入 data/（阅卷时会退回看整页）'
         return r, answers
     except Exception as e:
         return {'ok': False, 'name': name, 'error': str(e)}, None
@@ -196,6 +204,27 @@ def _save_overlay(rid, png):
         return True
     except OSError:
         return False
+
+
+def _save_regions(rid, shots):
+    """写主观题作答区裁剪图 DATA/<rid>_q<题号>.jpg，返回成功落盘的题号列表。
+
+    与校对图同一个目录、同一套命名（rid 是随机的 12 位 hex），所以
+    「猜到别人的图」同样要猜 16^12 次；清理时删一个目录就全清了。
+    """
+    saved = []
+    try:
+        os.makedirs(DATA, exist_ok=True)
+    except OSError:
+        return saved
+    for qno, blob in (shots or {}).items():
+        try:
+            with open(os.path.join(DATA, '%s_q%s.jpg' % (rid, qno)), 'wb') as fh:
+                fh.write(blob)
+            saved.append(str(qno))
+        except (OSError, TypeError):
+            continue
+    return saved
 
 
 def _params():
@@ -377,6 +406,21 @@ def _qnos(exam, sheets):
         for s in STORE.students(exam['id']):
             qset |= set((s.get('answers') or {}).keys())
     return sorted(qset)
+
+
+def _subjective(exam):
+    """当前考试模板里的主观题表：{题号: {'points','subs','region','page'}}。
+
+    每次都从模板现算、不缓存 —— 老师重传模板后立刻生效，不会出现
+    「模板换了、阅卷区还是按旧尺寸裁的」这种对不上卷面的情况。
+    """
+    tpl = exam.get('templateJson')
+    return omr.subjective_map(tpl) if tpl else {}
+
+
+def _subj_view(subj):
+    """发给浏览器的版本：题号转字符串（JSON 对象就是字符串键，前端直接查得着）。"""
+    return {str(k): v for k, v in (subj or {}).items()}
 
 
 # ---------------------------------------------------------------- 名单 / 补录
@@ -927,10 +971,12 @@ def scan():
     _page_guard(tpl, page_idx)
 
     cnn_model = _get_cnn_model()   # 第一次请求时尝试加载一次，失败退回 OpenCV
+    subjective = _subjective(exam)  # 模板里的主观题（没有就是空表，整条裁剪链路不触发）
     out, saved = [], []
     for f in files:
         r, answers = _recognize_bytes(f.read(), f.filename, tpl,
-                                      page_idx, px_per_mm, fill_min, gap, cnn_model)
+                                      page_idx, px_per_mm, fill_min, gap, cnn_model,
+                                      subjective=subjective)
         if answers is not None:
             saved.append((r['id'], f.filename, answers, None, None, None, f.filename))
         out.append(r)
@@ -952,6 +998,7 @@ def batch_api():
         return _err('没有上传扫描件（zip 压缩包 / 整张图片 / 整个文件夹都行）')
     page_idx, px_per_mm, fill_min, gap = _params()
     cnn_model = _get_cnn_model()   # 手写 CNN：第一次请求时加载一次，失败退回 OpenCV
+    subjective = _subjective(exam)  # 主观题表：给了才裁作答区，纯选择题卷子完全不走
 
     # 选文件夹上传时浏览器会带 webkitRelativePath，用它还原目录结构；顺序与 files 对齐
     paths = request.form.getlist('paths')
@@ -986,7 +1033,8 @@ def batch_api():
                 continue
             r, answers = _recognize_bytes(p['data'], p['name'], tpl,
                                           page_idx=p['page'], px_per_mm=px_per_mm,
-                                          fill_min=fill_min, gap=gap, cnn_model=cnn_model)
+                                          fill_min=fill_min, gap=gap, cnn_model=cnn_model,
+                                          subjective=subjective)
             r['page'] = p['page']
             r['hinted'] = p.get('hinted')
             r['source'] = p['relpath']
@@ -1074,8 +1122,21 @@ def get_students():
 # 复核结论（逐题改判 / 复核分 / 待复核标记 / 备注）存在每个考生的 data.grading 里，
 # 跟 answers 走同一条落库/读回路径 —— 刷新、重新套名单、重启都不丢。
 
+def _finite(v):
+    """isinstance 检查过不了 NaN/±inf —— 分数进了 nan，整份成绩单的总分就废了。"""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
 def _sanitize_grading(body):
-    """把前端传来的 grading 收成规整形状，坏字段直接丢掉而不是静默乱存。"""
+    """把前端传来的 grading 收成规整形状，坏字段直接丢掉而不是静默乱存。
+
+    scores / subs 是主观题的**人工给分**（区别于 overrides 的「判对/判错」）：
+      scores = {题号: 分}          —— 整题给分模式
+      subs   = {题号: [分, 分, …]}  —— 按小问分别给分模式（下标对应模板里的小问顺序）
+    两种模式由模板决定，前端只填其中一种；这里两种都收，谁空着就是没用那种。
+    键一律存成**字符串**题号 —— 这是 grading 内部字典的既定口径（与 answers/fixes 不同，
+    那两个由 store._QKEYED 归一化，grading 是嵌套字典、不走那条路）。
+    """
     g = body.get('grading') if isinstance(body, dict) else None
     if not isinstance(g, dict):
         raise ApiError('grading 必须是对象')
@@ -1083,9 +1144,22 @@ def _sanitize_grading(body):
     for k, v in (g.get('overrides') or {}).items():
         if str(k).lstrip('-').isdigit():
             overrides[int(k)] = bool(v)
+    scores = {}
+    for k, v in (g.get('scores') or {}).items():
+        if str(k).lstrip('-').isdigit() and _finite(v):
+            scores[str(int(k))] = float(v)
+    subs = {}
+    for k, v in (g.get('subs') or {}).items():
+        if not str(k).lstrip('-').isdigit() or not isinstance(v, (list, tuple)):
+            continue
+        vals = [float(x) if _finite(x) else 0.0 for x in v]
+        if vals:
+            subs[str(int(k))] = vals
     ms = g.get('manualScore')
-    man = ms if isinstance(ms, (int, float)) and not isinstance(ms, bool) else None
+    man = float(ms) if _finite(ms) else None
     return {'overrides': overrides,
+            'scores': scores,
+            'subs': subs,
             'manualScore': man,
             'review': bool(g.get('review')),
             'note': str(g.get('note') or '')}
@@ -1198,24 +1272,35 @@ def engine_accuracy():
 
 @app.get('/api/gradebook')
 def gradebook():
-    """阅卷工作台的数据：每个考生的自动分、复核后分、逐题对错、复核标记。"""
+    """阅卷工作台的数据：每个考生的自动分、复核后分、逐题对错、复核标记。
+
+    `subjective` 是模板里的主观题表（含满分 / 小问 / 所在页），前端据此渲染
+    主观题打分卡并拼出作答区图片地址；`max` 是各类满分的分母。
+    """
     exam = _exam(create=False)
     if not exam:
         return jsonify({'students': [], 'exam': None, 'qnos': [], 'key': {}, 'hasKey': False,
+                        'subjective': {}, 'max': {'auto': 0, 'subjective': 0, 'total': 0},
                         'summary': {'count': 0, 'graded': 0, 'review': 0, 'avg': 0}})
     key = exam['answerKey']
     rules = exam.get('rules') or {}
+    subj = _subjective(exam)
     students, _ = _students_view(exam)
     qnos = _qnos(exam, [])
     rows = []
     for s in students:
         ans = s.get('answers') or {}
         grading = s.get('grading') or {}
-        per_q, total, auto, final = scor.apply_rules(ans, qnos, key, rules, grading)
+        per_q, total, auto, final = scor.apply_rules(ans, qnos, key, rules, grading, subj)
+        # 复核分的两个组成部分：客观（规则/改判）与主观（老师打分）。
+        # 前端表格要分列显示「客观 19 + 主观 14.5 = 33.5」，所以在这里拆好，
+        # 别让浏览器再实现一遍算分口径（那正是最容易和扫描端分叉的地方）。
+        objv = sum(v.get('score', 0) for v in per_q.values() if not v.get('subjective'))
+        subv = sum(v.get('score', 0) for v in per_q.values() if v.get('subjective'))
         rows.append({
             'sid': str(s.get('sid')), 'name': s.get('name') or '', 'cls': s.get('cls') or '',
             'matched': s.get('matched'), 'sidSource': s.get('sidSource'),
-            'auto': auto, 'total': total,
+            'auto': auto, 'total': total, 'obj': round(objv, 4), 'sub': round(subv, 4),
             'grading': grading,
             'correct': {str(k): v.get('auto') for k, v in per_q.items()},
             'per_q': {str(k): v for k, v in per_q.items()},
@@ -1227,16 +1312,18 @@ def gradebook():
             'fixedQnos': s.get('fixedQnos') or [],
             # 逐页校对图（识别时就已按页落盘 DATA/<id>.png）：老师改答案时要能
             # 对着原卷看机器读到的是什么，否则「人工修正」等于盲改。
+            # regions 是该页做过裁剪的主观题题号 —— 有它才显示「默认裁剪」。
             'pages': [{'page': p.get('page'), 'id': p.get('id'),
                        'overlay': bool(p.get('overlay')), 'name': p.get('name') or '',
-                       'ok': bool(p.get('ok'))}
+                       'regions': p.get('regions') or [], 'ok': bool(p.get('ok'))}
                       for p in (s.get('pages') or []) if p.get('id')],
         })
     graded = sum(1 for r in rows if r['grading'])
     review = sum(1 for r in rows if r['grading'].get('review'))
     avg = (sum(r['effective'] for r in rows) / len(rows)) if rows else 0
     return jsonify({'exam': _exam_view(exam), 'qnos': qnos, 'key': key, 'hasKey': bool(key),
-                    'rules': rules,
+                    'rules': rules, 'subjective': _subj_view(subj),
+                    'max': scor.max_points(qnos, key, rules, subj),
                     'students': rows,
                     'summary': {'count': len(rows), 'graded': graded,
                                 'review': review, 'avg': round(avg, 1)}})
@@ -1271,7 +1358,18 @@ def stats_api():
     # 判「有没有传」要看文本空不空，不能用 `or`：传了空串是想清空，`or` 会把它当没传。
     key = st.parse_key(key_text) if (key_text or '').strip() else exam['answerKey']
     sheets = _sheets(exam, ids)
-    return jsonify(st.summarize(sheets, _qnos(exam, sheets), key or None))
+    subj = _subjective(exam)
+    # 主观题的分数只存在考生 grading 里，做「平均得分」汇总要按考号取回来
+    gmap = {}
+    if subj:
+        for s in _students_view(exam)[0]:
+            gmap[str(s.get('sid'))] = s.get('grading')
+    return jsonify(st.summarize(sheets, _qnos(exam, sheets), key or None, subj, gmap))
+
+
+def _score_cell(v):
+    """整数分显示成整数（'4' 不是 '4.0'），规则可能出小数（半对=0.5）时保留小数。"""
+    return int(v) if float(v).is_integer() else round(v, 2)
 
 
 @app.post('/api/export.csv')
@@ -1286,30 +1384,57 @@ def export_csv():
     if any(s.get('sid') for s in sheets):
         sheets.sort(key=lambda s: bt.natkey(str(s.get('sid') or '')))
     qnos = _qnos(exam, sheets)
+    subj = _subjective(exam)
+    has_sub = bool(subj)
     with_id = any(s.get('sid') for s in sheets)
 
     # 复核分导出：把人工改判合并进去。grading 是按考号挂在考生上的，先建一张映射。
+    # 主观题也走这张映射 —— 老师给解答题打的分就存在同一个 grading 里。
     gmap = {}
-    if graded and key:
+    if (graded and key) or has_sub:
         for s in _students_view(exam)[0]:
             gmap[str(s.get('sid'))] = s.get('grading')
 
+    # 分数列的形状：
+    #   有主观题 → 客观分 / 主观分 / 总分 三列（老师要能看出「这 88 分里 20 分是解答题」）
+    #   没有主观题 → 保持原来那一列（得分 / 复核分），纯选择题卷子的导出不变
+    if has_sub:
+        tail = ['客观分', '主观分', '总分']
+    elif key:
+        tail = ['复核分' if graded else '得分']
+    else:
+        tail = []
     head = (['考号', '姓名', '班级'] if with_id else []) + ['文件'] \
-        + [str(q) for q in qnos] + (['复核分' if graded else '得分'] if key else [])
+        + [str(q) for q in qnos] + tail
+    total_max = scor.max_points(qnos, key, rules, subj) if has_sub else None
+
     rows = []
     for s in sheets:
         row = [s.get('sid', ''), s.get('stu', ''), s.get('cls', '')] if with_id else []
-        row += [s.get('name', '')] + [s['answers'].get(q, {}).get('answer') or '' for q in qnos]
-        if key:
-            _, total, auto, final = scor.apply_rules(
-                s['answers'], qnos, key, rules, gmap.get(str(s.get('sid'))) if graded else None)
-            v = final if graded else auto
-            # 整数分显示成整数（'4' 不是 '4.0'），规则可能出小数（半对=0.5）时保留小数。
-            row.append(int(v) if float(v).is_integer() else round(v, 2))
+        g = gmap.get(str(s.get('sid'))) if ((graded and key) or has_sub) else None
+        per_q, total, auto, final = scor.apply_rules(s['answers'], qnos, key, rules, g, subj)
+        # 逐题列：客观题给字母，主观题给这一题的得分（数字）—— 主观题本来就没字母可给
+        cells = []
+        for q in qnos:
+            if subj.get(q, subj.get(str(q))):
+                cells.append(_score_cell(per_q.get(q, {}).get('score', 0) or 0))
+            else:
+                cells.append(s['answers'].get(q, {}).get('answer') or '')
+        row += [s.get('name', '')] + cells
+        if has_sub:
+            obj = sum(v.get('score', 0) for v in per_q.values() if not v.get('subjective'))
+            sub = sum(v.get('score', 0) for v in per_q.values() if v.get('subjective'))
+            row += [_score_cell(obj), _score_cell(sub), _score_cell(final)]
+        elif key:
+            row.append(_score_cell(final if graded else auto))
         rows.append(row)
     csv_text = st.to_csv(rows, head)
-    return Response(csv_text, mimetype='text/csv; charset=utf-8',
-                    headers={'Content-Disposition': 'attachment; filename="omr-answers.csv"'})
+    headers = {'Content-Disposition': 'attachment; filename="omr-answers.csv"'}
+    if total_max:
+        # 满分跟着表头走：老师拿去核对「总分是不是 = 卷面满分」时不用再翻模板
+        headers['X-Score-Max'] = '%s/%s/%s' % (total_max['auto'], total_max['subjective'],
+                                               total_max['total'])
+    return Response(csv_text, mimetype='text/csv; charset=utf-8', headers=headers)
 
 
 @app.get('/api/rules')
@@ -1353,6 +1478,17 @@ def set_rules():
 def overlay(rid):
     # 校对图按 id 取，不按考试分目录 —— 文件名是随机的 12 位 hex，猜到别人的等于猜 16^12 次
     return send_from_directory(DATA, rid + '.png', mimetype='image/png')
+
+
+@app.get('/api/region/<rid>/<int:qno>.jpg')
+def region_shot(rid, qno):
+    """主观题作答区裁剪图（识别时按 rid + 题号落盘，见 _save_regions）。
+
+    只服务「默认显示裁剪区」那一步；老师点「看整页」走的是校对图
+    /api/overlay/<rid>.png —— 那张图上还画了框和墨迹值，对着整页核更直观，
+    所以不为整页另存一份原图（一个班 100 张全尺寸矫正图的体积不划算）。
+    """
+    return send_from_directory(DATA, '%s_q%d.jpg' % (rid, qno), mimetype='image/jpeg')
 
 
 # ---------------------------------------------------------------- 路由：账号

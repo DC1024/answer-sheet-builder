@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.3.2"><img alt="version" src="https://img.shields.io/badge/version-1.3.2-blue"></a>
+  <a href="https://github.com/DC1024/answer-sheet-builder/releases/tag/v1.4.0"><img alt="version" src="https://img.shields.io/badge/version-1.4.0-blue"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="no backend" src="https://img.shields.io/badge/backend-none-success">
   <a href="https://github.com/DC1024/answer-sheet-builder/actions/workflows/docker.yml"><img alt="docker build" src="https://github.com/DC1024/answer-sheet-builder/actions/workflows/docker.yml/badge.svg"></a>
@@ -37,6 +37,7 @@ your machine — everything runs in the browser. Package it as a Docker image to
 | 🎯 **Corner registration marks** | **Square** or **triangle** marks with adjustable size (2–10mm). Every face that **has content** automatically gets four corner marks; blank faces get none. Page margins are reserved from the mark size, so marks **never overlap content**; forced to render in print for scanner alignment. |
 | ✎ **Nested blank items** | Supports nested items like `11(1)`, `11(2)①/②`, with **layer-aware auto-numbering** (sub `(1)(2)` → sub-sub `①②` → deeper `a) b)`); **items keep filling the same line until it is full**, then wrap. Each blank's **length** and **row spacing** are adjustable, and the spacing is **identical between questions and across wrapped lines**. |
 | 📐 **Ruled areas / figures** | Free-response areas can be **blank** or **ruled** with equal spacing; **line gap** and **box height** are configurable — the height can also be **dragged live in the preview** (40–400mm; one undo step per drag). **Each question can hold one figure**: select the block, hover an answer area in the preview and press **Ctrl+V**; the image **overlays inside the answer box** (no height taken, ruled lines untouched) with **9-grid positioning** and adjustable width; overflow is clipped (compressed locally, stored in the browser). |
+| 📝 **Subjective grading** | Choice, fill-in-the-blank and free-response blocks can all be marked "**manual grading**": set the **max score**, optionally split into **sub-questions** (each scored separately). The exported template carries a **single whole-question answer region**; the scanner crops that region into an image, and you score it in the grading workbench. The gradebook gains an **objective / subjective / total** breakdown. Which of the two scoring modes applies (one mark for the whole question, or the sum of its sub-marks) is decided by the template, and every mark is **clamped to its own max**. **A pure multiple-choice exam behaves exactly as before.** |
 | 🪪 **Student info bar** | Add/remove handwritten fields (class / name / exam number). The **exam-number grid** uses bracket squares with **digits printed inside** (up to 20 digits). Its width is capped at **1/4 of the page width** by default (adjustable 10–60%); bubbles are pushed to **3–5mm** (fillable and legible) inside the cap and the surplus goes to the fields column. The cap is relaxed only when even 3mm cannot fit — and never overflows the paper. |
 | ⌨️ **Shortcuts** | **Ctrl+C / Ctrl+X / Ctrl+V** to copy, cut and paste blocks (with an Image block selected, paste an image straight from the clipboard); **Ctrl+Z / Ctrl+Y** for undo / redo (snapshot-based, up to 100 steps). |
 | 🖼 **Images** | Insert images and adjust **width (%) and alignment (left / center / right)**; compressed on upload and stored **only in the browser** — no server — and they appear in print / PDF output. |
@@ -64,6 +65,21 @@ Grab both zips from [Releases](https://github.com/DC1024/answer-sheet-builder/re
 
 Data defaults to `%LOCALAPPDATA%\asb-scanner\data` (copying that folder is a full backup). Each zip ships a
 `使用说明.txt`. If antivirus flags the exe, allow it — false positives on PyInstaller one-file bundles are common.
+
+**Subjective (free-response / fill-in-the-blank) grading**: this is not just a multiple-choice tool. Tick
+"**manual grading**" on any question in the designer and set its **max score** (optionally split it into
+**sub-questions**, each scored separately) — the exported template then carries a **single whole-question
+answer region**. During recognition the scanner crops that region out of the **clean deskewed image**, and the
+grading workbench shows **that question's answer area** on the right by default (large enough to actually read
+the handwriting), with a one-click switch to **full-page review**. Each subjective question gets a scoring card,
+and the footer recomputes instantly as you type: `objective 19 + subjective 13 = 32 / 35`.
+
+The scoring mode is decided by the template: with **sub-questions** defined, each is scored and summed;
+otherwise the whole question gets **one mark**. Every mark is **clamped to its own max**, so fat-fingering 8
+into 80 cannot blow up the total. An exam containing subjective questions automatically switches the gradebook
+and CSV export from two columns to **objective / subjective / total** (with the maxima in the `X-Score-Max`
+header); **a pure multiple-choice exam keeps its original two columns**, so neither your habits nor any
+existing script needs to change.
 
 Both ends have a **settings panel** (⚙ in the builder's toolbar, "Settings → ① Settings" in the scanner) where you can
 **toggle the automatic update check**, **check manually** and **see the version**. A blocked network shows

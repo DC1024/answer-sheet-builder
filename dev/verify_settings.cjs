@@ -17,6 +17,18 @@ const ROOT = path.resolve(__dirname, '..');
 const EXE = path.join(process.env.LOCALAPPDATA || '',
   'ms-playwright', 'chromium-1234', 'chrome-win64', 'chrome.exe');
 
+// 当前版本号**从源码读**，不许再在这里写死 —— 写死一个 'v1.0.3' 的结果是：
+// 每次发版这个脚本都会变红，而人第一反应是"测试坏了"而不是"我版本号改对了"，
+// 于是这条断言就被改成新数字，慢慢没人再看它。读源码则永远只验「页面显示的和
+// version.js 一致」这件真正该验的事。
+const APP_VERSION = (() => {
+  const src = fs.readFileSync(path.join(ROOT, 'assets', 'js', 'core', 'version.js'), 'utf8');
+  const m = /APP_VERSION\s*=\s*['"]([^'"]+)['"]/.exec(src);
+  if (!m) throw new Error('assets/js/core/version.js 里找不到 APP_VERSION');
+  return m[1];
+})();
+const CUR_TAG = 'v' + APP_VERSION;
+
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
   '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
@@ -66,7 +78,7 @@ const RELEASE = {
   let script = 'newer';
   await ctx.route('https://api.github.com/**', route => {
     if (script === 'fail') return route.abort('connectionfailed');
-    const tag = script === 'newer' ? RELEASE.tag_name : 'v1.0.3';
+    const tag = script === 'newer' ? RELEASE.tag_name : CUR_TAG;
     route.fulfill({
       status: 200,
       contentType: 'application/json; charset=utf-8',
@@ -91,7 +103,7 @@ const RELEASE = {
   console.log('\n【2】打开设置');
   await page.click('#btn-settings');
   ok(await page.isVisible('#setModal'), '点按钮 → 弹窗打开');
-  eq((await page.textContent('#setVer')).trim(), 'v1.0.3', '显示当前版本号');
+  eq((await page.textContent('#setVer')).trim(), CUR_TAG, '显示当前版本号（与 version.js 一致）');
   ok(await page.isChecked('#setAutoUpd'), '「自动检查更新」默认开启');
 
   console.log('\n【3】自动检查更新（后台）');

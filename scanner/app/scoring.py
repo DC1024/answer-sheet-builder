@@ -177,17 +177,120 @@ def score_one(rule, selected, key=None):
                         'correct': n_correct, 'wrong': n_wrong}
 
 
-def apply_rules(answers, qnos, key, rules=None, grading=None):
+# ---------------------------------------------------------------- 主观题（人工阅卷）
+#
+# 主观题**不是新题型**，而是任意作答块的一个属性：制卡端给某道题（或它的小问）填了
+# 「满分」，扫描端 omr.subjective_map 就把它收进来，这里负责把老师的打分算成得分。
+#
+# 两种给分模式由「有没有小问」决定，与制卡端 grading.js 完全同一条规则：
+#   subs 为空 → 整题一个分（grading.scores[题号]）
+#   有 subs   → 按小问分别给分再汇总（grading.subs[题号] = [分, 分, ...]）
+#
+# 打分一律夹在 0 ~ 该题/该小问满分之间：老师手滑多打一位（80 打成 800）也不该
+# 让总分炸掉，这种错误现场没人会当场发现。
+
+def _num(v, default=0.0):
+    """安全的数字转换。非数字、NaN、±inf 一律当默认值 —— 分数链路上不能出现 nan，
+    否则一个 nan 会让整份成绩单的「总分」变成 nan，CSV 里看着就是空的。"""
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return default
+    if n != n or n in (float('inf'), float('-inf')):
+        return default
+    return n
+
+
+def _fmt(v):
+    """分数显示：整数不带小数点（'8' 而不是 '8.0'），小数保留两位。"""
+    v = _num(v)
+    return str(int(v)) if float(v).is_integer() else ('%.2f' % v)
+
+
+def _has_key(d, k):
+    """grading 里的分数字典有没有这个题号。键可能是 int 也可能是 str（过了 JSON 一遭），
+    两种都要认 —— 只认一种的话表现是「老师打了分，刷新回来分没了」。"""
+    return k in d or str(k) in d
+
+
+def _get(d, k, default=None):
+    if k in d:
+        return d[k]
+    return d.get(str(k), default)
+
+
+def subjective_score(info, grading, q):
+    """主观题的人工得分。
+
+    info:    omr.subjective_map 的条目 {'points', 'subs', ...}
+    grading: 考生 grading 字典（scores: {题号: 分}，subs: {题号: [各小问分]}）
+    q:       题号
+
+    返回 (得分, 明细)。明细：{'mode','max','graded','marks'}
+      mode    'subs'（按小问）| 'whole'（整题一个分）
+      max     该题满分
+      graded  老师是否真的打过分（没打分 = 0 分，但要能区分「未阅」和「真给 0 分」）
+      marks   逐小问明细 [{label, points, score}]
+    """
+    grading = grading or {}
+    subs = info.get('subs') or []
+    if subs:
+        raw = _get(grading.get('subs') or {}, q)
+        raw = list(raw) if isinstance(raw, (list, tuple)) else []
+        graded = len(raw) > 0
+        got, mx, marks = 0.0, 0.0, []
+        for i, s in enumerate(subs):
+            cap = _num(s.get('points'))
+            v = min(max(_num(raw[i] if i < len(raw) else None), 0.0), cap)
+            got += v
+            mx += cap
+            marks.append({'label': s.get('label') or '', 'points': cap, 'score': v})
+        return round(got, 4), {'mode': 'subs', 'max': round(mx, 4),
+                               'graded': graded, 'marks': marks}
+    cap = _num(info.get('points'))
+    sc = grading.get('scores') or {}
+    graded = _has_key(sc, q)
+    v = min(max(_num(_get(sc, q)), 0.0), cap)
+    return round(v, 4), {'mode': 'whole', 'max': round(cap, 4), 'graded': graded}
+
+
+def max_points(qnos, key=None, rules=None, subjective=None):
+    """各类满分统计：{'auto', 'subjective', 'total'}。
+
+    口径与 apply_rules 的 `total` 严格对齐 —— 「自动满分 12 + 主观满分 8 = 总分满分 20」
+    这种话老师是要拿去对卷面总分数的，两边分叉等于直接报错数。
+    """
+    rules = rules or {}
+    subjective = subjective or {}
+    auto = sub = 0.0
+    for q in qnos or []:
+        subj = subjective.get(q, subjective.get(str(q)))
+        if subj:
+            sub += _num(subj.get('points'))
+            continue
+        rule = normalize_rule(rules.get(str(q), rules.get(q))) if rules else None
+        if rule is None:
+            if (key or {}).get(q):
+                auto += 1.0
+        else:
+            auto += float(rule.get('points', DEFAULT_POINTS))
+    return {'auto': round(auto, 4), 'subjective': round(sub, 4),
+            'total': round(auto + sub, 4)}
+
+
+def apply_rules(answers, qnos, key, rules=None, grading=None, subjective=None):
     """把规则+人工复核叠加到一份卷子上，返回：
       (per_q, total, auto_total, final)
     per_q:   {题号: {'auto': 自动对错(bool/None), 'score': 复核后得分, 'verdict': 文本,
                     'correct': 该题是否判对(bool), 'selected': 学生选择集, 'key': 标准答案}}
-    total:   有标准答案、参与计分的题数
-    auto_total: 纯自动（规则）总得分
+             主观题多两个键：'subjective': True、'max': 该题满分（'marks' 为逐小问明细）。
+    total:   参与计分的题数（客观题 = 有标准答案/规则的题；主观题 = 纳入阅卷的题）
+    auto_total: 纯自动（规则）总得分 —— 主观题不产生自动分，所以它只统计客观部分
     final:   复核总得分（grading.manualScore 给了数字则覆盖，否则 = Σ per_q.score 且用规则）
     """
     rules = rules or {}
     grading = grading or {}
+    subjective = subjective or {}
     ov = {}
     for k, v in (grading.get('overrides') or {}).items():
         try:
@@ -199,9 +302,31 @@ def apply_rules(answers, qnos, key, rules=None, grading=None):
     per_q = {}
     auto_total, final_total, total = 0.0, 0.0, 0
     for q in qnos:
+        ans = (answers or {}).get(q) or {}
+        subj = subjective.get(q, subjective.get(str(q)))
+        if subj:
+            # 主观题：没有「机器判对判错」，分全部来自老师打分（grading.scores / grading.subs）。
+            # 必须放在标准答案判断之前 —— 主观题本来就没有标准答案，走下面那条会掉进
+            # '无标准答案' 分支、连总分都进不去。
+            total += 1
+            got, det = subjective_score(subj, grading, q)
+            final_total += got
+            graded = det.get('graded')
+            per_q[q] = {
+                'auto': None,
+                'score': got,
+                'verdict': ('%s/%s' % (_fmt(got), _fmt(det['max'])) if graded else '待阅卷'),
+                'correct': None,
+                'selected': '',
+                'key': '',
+                'subjective': True,
+                'graded': graded,
+                'max': det['max'],
+                'marks': det.get('marks') or [],
+            }
+            continue
         kv = (key or {}).get(q)
         qkey = kv
-        ans = (answers or {}).get(q) or {}
         # 只有显式配了规则才走规则计分；没配 → 保持传统"单选项精确匹配，每题 1 分"。
         rule = normalize_rule(rules.get(str(q), rules.get(q))) if rules else None
 

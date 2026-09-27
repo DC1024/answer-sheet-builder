@@ -18,6 +18,8 @@ __pycache__/
 # 本地临时文件
 *.tmp
 _rendertest.mjs
+# 开发脚本的中间产物（verify_subjective.cjs 导出的模板等）
+dev/.cache/
 
 # UI 走查输出 / 探针截图
 _ui_out/

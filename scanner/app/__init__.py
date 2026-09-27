@@ -8,7 +8,7 @@
 两份要一起改 —— CHANGELOG 末尾的「发版清单」里写了。）
 """
 
-__version__ = '1.3.2'
+__version__ = '1.4.0'
 
 # 更新检测的数据源：本项目自己的公开仓库
 REPO = 'DC1024/answer-sheet-builder'

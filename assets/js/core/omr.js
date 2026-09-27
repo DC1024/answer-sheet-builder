@@ -99,6 +99,33 @@ export function exportOmrTemplate(sheet){
       questions.push({ no, x: qc.x, y: qc.y, options: opts });
     });
     questions.sort((a, b) => a.no - b.no);
+    // 主观题作答区（解答题 / 填空题 勾了「人工阅卷」的大题）：
+    // 导出**整题一块**的作答区坐标 + 满分 / 小问，扫描端据此把这道题裁出来给老师打分。
+    // 坐标口径与选择题完全一致（中心点 + 宽高，mm）—— 扫描端一套换算就走得通。
+    p.querySelectorAll('[data-region]').forEach(el => {
+      const no = parseInt(el.dataset.region, 10);
+      if (!no) return;
+      let subs = [];
+      if (el.dataset.regionSubs){
+        try { subs = JSON.parse(el.dataset.regionSubs) || []; } catch (_) { subs = []; }
+      }
+      subs = (Array.isArray(subs) ? subs : [])
+        .map(s => ({ label: String((s && s.label) || ''), points: +((s && s.points) || 0) }))
+        .filter(s => s.points > 0);
+      const pts = parseFloat(el.dataset.regionPoints) || 0;
+      const sum = subs.reduce((n, s) => n + s.points, 0);
+      const max = pts > 0 ? pts : sum;               // 只配了小问就取小问之和
+      if (!(max > 0)) return;                        // 没设满分 = 不纳入人工阅卷
+      const c = centerMM(el, pr, mmpp);
+      const q = { no, x: c.x, y: c.y,
+        region: { x: c.x, y: c.y, w: +Math.max(3, c.w).toFixed(2), h: +Math.max(3, c.h).toFixed(2) },
+        points: +max.toFixed(2) };
+      if (subs.length) q.subs = subs.map(s => ({ label: s.label, points: +s.points.toFixed(2) }));
+      const dup = questions.findIndex(x => x.no === no);
+      if (dup >= 0) questions[dup] = q;              // 同题号以主观题为准（不该发生，但别留两份）
+      else questions.push(q);
+    });
+    questions.sort((a, b) => a.no - b.no);
     const sid = sidOf(p, pr, mmpp);
     const page = { index: idx, marks, questions };
     if (sid) page.sid = sid;                          // 没有就整个字段不出现

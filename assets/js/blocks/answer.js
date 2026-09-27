@@ -1,6 +1,11 @@
 // 模块：解答题（可设作答区高度；可选「横线」样式；每题可在作答区内叠加图片，九宫格定位）
+//
+// 人工阅卷（主观题）：每题可设「满分」，并可拆成若干「小问」分别给分。
+// 作答区坐标会随模板导出（data-region → questions[].region），扫描端据此把该题的
+// 作答区裁出来给老师打分 —— 老师不用在整页里找题。
 import { esc, commonStyle, compressImage, dataUrlKB } from '../core/util.js';
 import { ansTargetFor } from '../core/uistate.js';
+import { normalizeGrade, gradeAttrs, gradeConfigHTML, bindGrade } from '../core/grading.js';
 
 const MAX_INPUT = 20 * 1024 * 1024;
 
@@ -13,7 +18,7 @@ const POS = [
 const POS_NAME = Object.fromEntries(POS);
 const clampPos = v => (POS_NAME[v] ? v : 'mc');
 
-const qDef = () => ({ h: 160, img: '', ratio: 0, imgW: 60, imgPos: 'mc' });
+const qDef = () => ({ h: 160, img: '', ratio: 0, imgW: 60, imgPos: 'mc', points: 0, subs: [] });
 
 export default {
   type: 'answer',
@@ -33,6 +38,7 @@ export default {
       if (q.ratio === undefined) q.ratio = 0;
       if (q.imgW === undefined) q.imgW = 60;
       if (q.imgPos === undefined) q.imgPos = 'mc';
+      normalizeGrade(q);
     });
     const actQ = Math.min(ansTargetFor(block && block.id), config.questions.length - 1);
 
@@ -53,7 +59,8 @@ export default {
         <input type="number" min="4" max="20" data-k="lineGap" value="${config.lineGap ?? 8}">
       </label>
       <p class="hint">横线间距仅在「横线」样式下生效。每题的「作答区高度」单位 mm（40–400）——<b>也可以直接在右侧预览区拖动作答区的下边缘实时调整</b>。<br>
-      <b>图片贴在作答区内</b>：选中本模块后，把鼠标停在预览区某个作答区上，按 <b>Ctrl+V</b> 即贴进该题（也可用下面的文件选择）；图片<b>叠加在作答区内、不占高度也不挤压横线</b>，位置用九宫格调整，超出作答区的部分会被裁切 —— 图太大就调小「图片宽」或加高作答区。</p>
+      <b>图片贴在作答区内</b>：选中本模块后，把鼠标停在预览区某个作答区上，按 <b>Ctrl+V</b> 即贴进该题（也可用下面的文件选择）；图片<b>叠加在作答区内、不占高度也不挤压横线</b>，位置用九宫格调整，超出作答区的部分会被裁切 —— 图太大就调小「图片宽」或加高作答区。<br>
+      <b>人工阅卷</b>：给某题填「满分」即把它纳入阅卷（满分填 0 则不纳入）。可只给整题一个分数，也可点「+ 小问」拆成几个小问分别给分 —— 导出的模板会带上这一整块作答区的位置，扫描端阅卷时自动把该题裁出来给老师打分。</p>
       <div class="qlist" id="ans-list"></div>
       <button class="addbtn" data-act="add">+ 增加一题</button>
     `;
@@ -91,6 +98,7 @@ export default {
           </div>
           ${q.img ? `<div class="img-thumb"><img src="${q.img}" alt=""></div>
             <p class="hint" style="margin:2px 0 0;">已插入图片（约 ${dataUrlKB(q.img)} KB），位置：${POS_NAME[clampPos(q.imgPos)]}</p>` : ''}
+          ${gradeConfigHTML(q, { label: '第 ' + (startNo + i) + ' 题' })}
         </div>`).join('');
 
       list.querySelectorAll('[data-imgpos]').forEach(sel => {
@@ -131,6 +139,10 @@ export default {
         if (config.questions.length === 0) config.questions.push(qDef());
         renderList(); onChange();
       }));
+      // 人工阅卷：每题一个「满分 + 小问」区块（小问增删要重绘这张卡片）
+      list.querySelectorAll('.qcard').forEach((card, i) => {
+        bindGrade(card, config.questions[i], { onChange, rerender: renderList });
+      });
     };
     renderList();
 
@@ -160,8 +172,9 @@ export default {
       const imgHtml = q.img
         ? `<div class="ans-ov pos-${pos}"><img src="${q.img}" style="width:${imgW}%;${(+q.ratio > 0) ? `aspect-ratio:${q.ratio};` : ''}"></div>`
         : '';
+      // data-region：这一整块作答区就是「整题一块」的阅卷区域，omr.js 量它导出模板
       return `<div class="ans-box">
-        <div class="ah">${start + i}.</div><div class="${abCls}" style="${abStyle}">${imgHtml}</div></div>`;
+        <div class="ah">${start + i}.</div><div class="${abCls}" data-region="${start + i}"${gradeAttrs(q)} style="${abStyle}">${imgHtml}</div></div>`;
     }).join('');
     return `<div class="blk" style="${commonStyle(config)}"><div class="blk-title">${esc(config.title)}</div>${qs}</div>`;
   }

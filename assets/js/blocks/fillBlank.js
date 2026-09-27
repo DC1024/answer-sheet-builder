@@ -6,10 +6,12 @@
 //   再深一层  a) b) c)      ← 第 3 层
 // 节点的 label 留空即「自动编号」；填了内容则作为手写编号（覆盖自动值）。
 import { esc, commonStyle } from '../core/util.js';
+import { normalizeGrade, gradeOn, gradeAttrs } from '../core/grading.js';
 
 const blankDef = () => ({ len: 30 });
 // label 留空 = 自动编号（旧版这里硬编码 '（1）'，导致任何层级新增小题都是（1））
-const nodeDef = () => ({ label: '', blanks: [blankDef()], subs: [] });
+// points：人工阅卷满分（0 = 不纳入）。大题上放「整题满分」，小题上放「该小问满分」。
+const nodeDef = () => ({ label: '', blanks: [blankDef()], subs: [], points: 0 });
 
 const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
 
@@ -31,23 +33,35 @@ function normalize(config){
   config.questions = config.questions.map(q => {
     if (typeof q.blanks === 'number'){
       const n = Math.max(1, parseInt(q.blanks) || 1);
-      return { label: '', blanks: Array.from({ length: n }, blankDef), subs: [] };
+      return { label: '', blanks: Array.from({ length: n }, blankDef), subs: [], points: 0 };
     }
     return q;
   });
-  config.questions.forEach(q => stripAutoLabels(q.subs, 1));
+  config.questions.forEach(q => { stripAutoLabels(q.subs, 1); normalizeGradeTree(q); });
   if (config.questions.length === 0){
     config.questions = [
-      { label: '', blanks: [], subs: [
-        { label: '', blanks: [blankDef(), blankDef()], subs: [] },
-        { label: '', blanks: [], subs: [
-          { label: '', blanks: [blankDef()], subs: [] },
-          { label: '', blanks: [blankDef(), blankDef(), blankDef()], subs: [] }
+      { label: '', points: 0, blanks: [], subs: [
+        { label: '', points: 0, blanks: [blankDef(), blankDef()], subs: [] },
+        { label: '', points: 0, blanks: [], subs: [
+          { label: '', points: 0, blanks: [blankDef()], subs: [] },
+          { label: '', points: 0, blanks: [blankDef(), blankDef(), blankDef()], subs: [] }
         ]}
       ]},
-      { label: '', blanks: [blankDef(), blankDef(), blankDef()], subs: [] }
+      { label: '', points: 0, blanks: [blankDef(), blankDef(), blankDef()], subs: [] }
     ];
   }
+}
+// 每个节点都补上 points（旧模板没有这个字段），深层节点只是不给 UI 入口
+function normalizeGradeTree(node, depth){
+  if (!node || typeof node !== 'object') return;
+  normalizeGrade(node);
+  (node.subs || []).forEach(s => normalizeGradeTree(s, (depth || 0) + 1));
+}
+// 大题的小问 = 它的直接小题里设了满分的那些（编号规则与 renderNode 完全一致）
+function subsOf(node){
+  return (node.subs || [])
+    .map((s, i) => ({ label: (s.label && s.label.trim()) || autoLabel(1, i), points: +s.points || 0 }))
+    .filter(s => s.points > 0);
 }
 function stripAutoLabels(nodes, depth){
   if (!Array.isArray(nodes)) return;
@@ -93,7 +107,8 @@ export default {
       </label>
       <div id="fb-tree"></div>
       <button class="addbtn" data-act="add-root">+ 增加大题</button>
-      <p class="hint">小题编号按层级自动生成：小题为（1）（2）、小小题为①②、再深为 a) b)。留空即自动编号，填内容可手写覆盖。<b>行间距决定每一行的行距，大题之间与折行后的行距保持一致</b>（过小时会按 1.4 倍字号兜底，防止上下行重叠）。</p>
+      <p class="hint">小题编号按层级自动生成：小题为（1）（2）、小小题为①②、再深为 a) b)。留空即自动编号，填内容可手写覆盖。<b>行间距决定每一行的行距，大题之间与折行后的行距保持一致</b>（过小时会按 1.4 倍字号兜底，防止上下行重叠）。<br>
+      <b>人工阅卷</b>：「整题满分」填 0 表示不阅卷；给小题也填上满分，这一大题就按小问分别给分再汇总。导出的模板会带上每个大题的作答区位置，扫描端阅卷时自动裁出来给老师打分。</p>
     `;
 
     const tree = container.querySelector('#fb-tree');
@@ -118,12 +133,21 @@ export default {
     normalize(config);
     const start = Math.max(1, +config.startNo || 1);
     const gap = Math.max(2, parseInt(config.gap) || 6);
+    // data-region：每个大题一整块（含它下面所有小题）作为阅卷区域，omr.js 量它导出模板
     const html = config.questions.map((q, i) =>
-      `<div class="fill-q">${renderNode(q, start + i, 0, i, gap)}</div>`
+      `<div class="fill-q" data-region="${start + i}"${gradeAttrsFor(q)}>${renderNode(q, start + i, 0, i, gap)}</div>`
     ).join('');
     return `<div class="blk" style="${commonStyle(config)};--fg:${gap}mm"><div class="blk-title">${esc(config.title)}</div>${html}</div>`;
   }
 };
+
+// 把大题节点转成 grading.gradeAttrs 认识的形状：
+// subs 用直接小题（编号与 renderNode 一致），只留设了满分的
+function gradeAttrsFor(node){
+  const subs = subsOf(node);
+  const g = { points: +node.points || 0, subs };
+  return gradeOn(g) ? gradeAttrs(g) : '';
+}
 
 // 递归渲染配置节点 —— 全部按「行内流式」输出：
 // 一行没排满就继续往同一行放，排满才自动换行（不再强制每个小题单独占一行）。
@@ -174,6 +198,30 @@ function buildNode(node, depth, index, onChange, removeSelf, rerender){
   delBtn.addEventListener('click', removeSelf);
   top.appendChild(delBtn);
   card.appendChild(top);
+
+  // 人工阅卷满分：大题（整题给分）与小问级（小题）可填，更深层不给入口 ——
+  // 只允许一层小问，老师才不会在「a) 再分小小题」上无限拆下去
+  if (depth <= 1){
+    const grow = document.createElement('div');
+    grow.className = 'qrow';
+    const ptsIn = document.createElement('input');
+    ptsIn.type = 'number';
+    ptsIn.min = 0; ptsIn.max = 200; ptsIn.step = 0.5;
+    ptsIn.value = Number(node.points) || 0;
+    ptsIn.style.width = '80px';
+    ptsIn.title = '人工阅卷满分；填 0 表示不纳入阅卷';
+    ptsIn.addEventListener('input', () => { node.points = parseFloat(ptsIn.value) || 0; onChange(); });
+    grow.innerHTML = depth === 0 ? '<span>整题满分</span>' : '<span>本小问满分</span>';
+    grow.appendChild(ptsIn);
+    if (depth === 0){
+      const tip = document.createElement('span');
+      tip.className = 'hint';
+      tip.style.margin = '0';
+      tip.textContent = '（0 = 不阅卷；给小题也填满分即按小问分别给分）';
+      grow.appendChild(tip);
+    }
+    card.appendChild(grow);
+  }
 
   // 空格列表
   const blanksWrap = document.createElement('div');

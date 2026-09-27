@@ -3,6 +3,8 @@ import csv
 import io
 from collections import Counter, defaultdict
 
+from . import scoring as _scoring
+
 FLAG_TEXT = {'ok': '', 'multi': '多选/存疑', 'faint': '浅涂存疑', 'blank': '未填',
               'review': '两分类器不一致/存疑', 'doubt': '置信不足'}
 
@@ -32,9 +34,20 @@ def parse_key(text):
     return {}
 
 
-def summarize(sheets, question_numbers, key=None):
-    """sheets: [{'name':..., 'answers': {no: {'answer','flag'}}}]"""
-    qnos = sorted(question_numbers or {q for s in sheets for q in s['answers']})
+def summarize(sheets, question_numbers, key=None, subjective=None, grading=None):
+    """sheets: [{'name':..., 'answers': {no: {'answer','flag'}}}]（可带 'sid'）
+
+    subjective: omr.subjective_map 的结果；grading: {考号: 该考生的 grading}。
+    主观题**不参与选项分布**（没有填涂圈，硬算出来就是「0 人作答」的假空行），
+    单独汇总成「这道题平均得了几分 / 阅了多少份」—— 老师要的是这个。
+    """
+    subjective = subjective or {}
+    grading = grading or {}
+    all_qnos = sorted(question_numbers or {q for s in sheets for q in s['answers']})
+    sub_of = {q: (subjective.get(q) or subjective.get(str(q))) for q in all_qnos}
+    qnos = [q for q in all_qnos if not sub_of[q]]
+    sub_qnos = [q for q in all_qnos if sub_of[q]]
+
     dist = {q: Counter() for q in qnos}
     n_blank = defaultdict(int)
     n_multi = defaultdict(int)
@@ -63,12 +76,17 @@ def summarize(sheets, question_numbers, key=None):
                     correct += 1
                 elif v:
                     wrong.append({'no': q, 'chose': v, 'key': kv})
+        g = grading.get(str(s.get('sid'))) or {}
+        sub_got = sum(_scoring.subjective_score(sub_of[q], g, q)[0] for q in sub_qnos)
+        sub_max = sum(_scoring._num(sub_of[q].get('points')) for q in sub_qnos)
         per_sheet.append({
             'name': s.get('name', ''),
             'score': correct,
             'total': len([q for q in qnos if (key or {}).get(q)]),
             'blank': len([q for q in qnos if ans.get(q, {}).get('flag') == 'blank']),
             'doubt': len([q for q in qnos if ans.get(q, {}).get('flag') in DOUBT_FLAGS]),
+            'subScore': round(sub_got, 4),
+            'subMax': round(sub_max, 4),
             'wrong': sorted(wrong, key=lambda x: x['no']),
         })
 
@@ -88,7 +106,27 @@ def summarize(sheets, question_numbers, key=None):
             row['rate'] = round(n_correct[q] / total * 100, 1) if total else 0.0
         questions.append(row)
 
+    # 主观题汇总：平均分 / 满分 / 已阅份数（没阅的不算进平均，否则开学第一天全是 0）
+    sub_rows = []
+    for q in sub_qnos:
+        info = sub_of[q]
+        mx = _scoring._num(info.get('points'))
+        got, n = 0.0, 0
+        for s in sheets:
+            g = grading.get(str(s.get('sid'))) or {}
+            v, det = _scoring.subjective_score(info, g, q)
+            got += v
+            if det.get('graded'):
+                n += 1
+        sub_rows.append({'no': q, 'points': round(mx, 4), 'graded': n,
+                         'scored': round(got, 4),
+                         'avg': round(got / n, 2) if n else None,
+                         'subs': info.get('subs') or []})
+
     return {'questions': questions, 'sheets': per_sheet,
+            'subjective': {'questions': sub_rows,
+                           'max': round(sum(r['points'] for r in sub_rows), 4),
+                           'graded': (sub_rows[0]['graded'] if sub_rows else 0)},
             'hasKey': bool(key), 'sheetCount': len(sheets)}
 
 
