@@ -2,6 +2,7 @@ flask==3.0.3
 numpy==1.26.4
 opencv-python-headless==4.9.0.80
 waitress==3.0.2
+onnxruntime==1.30.0
 # 手写 A-D CNN（app/cnn_letter.py）的推理后端 = ONNX Runtime（体积小、冷启快、不需要 libtorch）。
 # 权重 hwletter_cnn.onnx 已随 app/ 一起进镜像。缺失时 app 仍正常启动，
 # decode_write 自动退回纯 OpenCV（_get_cnn_model 优雅降级）。
