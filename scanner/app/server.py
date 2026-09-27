@@ -663,6 +663,21 @@ def check_update():
                         download=upd.download_state()))
 
 
+@app.get('/api/update/last-boot')
+def last_boot():
+    """上一次「安装并重启」的结果 —— 界面启动时调一次。
+
+    引导程序是在**服务已经退出之后**跑的，它失败了当时的界面根本看不到结果
+    （1.4.0 的现场就是「点了没反应」）。所以它把事故写进 update_boot.json，
+    新服务起来后由这里读给界面看。**读到了就清掉**，免得每次开都弹旧事故。
+    """
+    f = upd.bootstrap_failure(DATA)
+    if not f:
+        return jsonify({'ok': True, 'failure': None})
+    upd.clear_bootstrap(DATA)
+    return jsonify({'ok': True, 'failure': f})
+
+
 def _maybe_auto_download(latest):
     """自动安装开启时，后台拉一遍资产并开始下载+暂存。"""
     if not upd.self_update_available():
@@ -724,12 +739,17 @@ def update_install():
         return jsonify({'ok': False, 'error': '还没有下载好的更新（请先下载）'})
     if not os.path.isdir(src):
         return jsonify({'ok': False, 'error': '暂存目录缺失，请重新下载'})
-    ok = upd.trigger_install(DATA, src, version, list(sys.argv[1:]))
+    # trigger_install 会**等引导程序报到**才回 True —— 起不来就带原因回来，
+    # 界面显示「安装失败：…」而不是像 1.4.0 那样静默退出、什么都不发生。
+    ok, why = upd.trigger_install(DATA, src, version, list(sys.argv[1:]))
     if not ok:
-        return jsonify({'ok': False, 'error': '发起安装失败（无法复制启动器）'})
-    # 给页面一点时间收到响应，再退出让 bootstrap 接管
+        return jsonify({'ok': False, 'error': why or '发起安装失败'})
+    # 引导程序已在跑，可以安全退出了（它会把文件换掉并拉起新版本）。
+    # 带上 from/to 让前端知道该等哪个版本号出现，而不是盲等固定秒数。
     threading.Timer(0.6, lambda: os._exit(0)).start()
-    return jsonify({'ok': True, 'restarting': True})
+    return jsonify({'ok': True, 'restarting': True,
+                    'from': 'v' + APP_VERSION,
+                    'to': version if version.startswith('v') else 'v' + version})
 
 
 @app.get('/api/me')

@@ -141,31 +141,78 @@ def _banner(url: str, data: str, cnn: bool, db: str) -> None:
 
 
 def _bootstrap_apply_and_relaunch(data: str) -> int:
-    """引导模式：旧服务已退出，把暂存的新版本落到安装目录，再拉起新版本后退出。
+    """引导模式：等旧服务退出 → 把暂存的新版本落到安装目录 → 拉起新版本 → 退出。
 
-    只在「被更新的那份 exe 已经不在运行」时才能覆盖文件（Windows 会锁住正在跑的 exe），
-    所以这个分支由 trigger_install 复制出来的 bootstrap 进程跑，而不是正在服务的进程。
+    这个分支由 `update.trigger_install()` 起的引导程序跑。它**不能是服务自己**：
+    Windows 会锁住正在运行的 exe，而这里要覆盖的正是安装目录里那个 exe。
+
+    进入此分支的第一件事必须是 `mark_boot_reported()` —— 还开着的那个服务正在
+    轮询这个标记，只有看到它才相信「引导程序真的起来了」并安心退出。空窗期里
+    服务不退、文件就不会被提前锁上，两边不会抢。
     """
     from app import update as upd  # noqa: E402
 
-    p = upd.read_pending(data)
-    if not p:
+    boot = upd.read_boot_intent(data) or {}
+    if not boot:
         return 0
-    items = p.get("items") or []
-    res = upd.apply_pending(data)
-    if not res.get("ok"):
-        print("落地更新失败：%s" % res.get("error"), flush=True)
+    # ① 先报到（这是让老服务愿意退出的信号）
+    upd.mark_boot_reported(data)
+    upd.bootlog(data, "引导程序已启动：%s（本进程 pid=%d）"
+                % (sys.executable, os.getpid()))
+
+    pid = int(boot.get("servicePid") or 0)
+    try:
+        # ② 等老服务退出。不等就替换 = 撞文件锁 = 整次更新白做。
+        got = upd.wait_for_pid_exit(pid, timeout=upd.PID_WAIT)
+        upd.bootlog(data, "等待旧服务(pid=%s)退出：%s" % (pid, "已退出" if got else "超时"))
+        if not got:
+            upd.record_bootstrap(data, {
+                "version": boot.get("version", ""), "exitCode": -1,
+                "error": "旧服务 pid=%s 在 %s 秒内没有退出，无法覆盖安装目录"
+                         % (pid, int(upd.PID_WAIT))})
+            return 1
+
+        # ③ 落地。**先抄下 items** —— apply_pending 成功后会清掉 pending.json，
+        #    之后再读就是 None，第 ④ 步就没人可拉起了。
+        items = list((upd.read_pending(data) or {}).get("items") or [])
+        res = upd.apply_pending(data)
+        if not res.get("ok"):
+            why = res.get("error") or "未知原因"
+            upd.bootlog(data, "落地更新失败：%s" % why)
+            upd.record_bootstrap(data, {
+                "version": boot.get("version", ""), "exitCode": -2, "error": why})
+            return 1
+        upd.bootlog(data, "落地更新成功：%s" % res.get("version"))
+
+        # ④ 拉起新版本
+        for it in items:
+            if it.get("flavor") == upd.SELF_FLAVOR:
+                target = it["install_exe"]
+                args = list(it.get("launch_args") or [])
+                try:
+                    subprocess.Popen([target] + args, close_fds=True)
+                    upd.bootlog(data, "已拉起新版本：%s %s" % (target, " ".join(args)))
+                except Exception as e:  # noqa: BLE001
+                    upd.bootlog(data, "拉起新版本失败：%s" % e)
+                    upd.record_bootstrap(data, {
+                        "version": res.get("version", ""), "exitCode": -3,
+                        "error": "落地成功但拉起失败：%s" % e})
+                    return 1
+                break
+        else:
+            # 拿不到 items（pending 缺失/已被消费）时退回 boot 记录，别让新版本起不来
+            target = boot.get("installExe") or ""
+            if target:
+                subprocess.Popen([target] + list(boot.get("launchArgs") or []), close_fds=True)
+                upd.bootlog(data, "已拉起新版本（用 boot 记录）：%s" % target)
+        upd.bootlog(data, "本次更新流程结束")
+        return 0
+    except Exception as e:  # noqa: BLE001 —— 任何意外都要留痕，绝不能静默消失
+        upd.bootlog(data, "引导程序异常：%r" % (e,))
+        upd.record_bootstrap(data, {
+            "version": (upd.read_boot_intent(data) or {}).get("version", ""),
+            "exitCode": -4, "error": "引导程序异常：%r" % (e,)})
         return 1
-    print("已落地更新：%s，正在拉起新版本…" % res.get("version"), flush=True)
-    for it in items:
-        if it.get("flavor") == upd.SELF_FLAVOR:
-            try:
-                subprocess.Popen([it["install_exe"]] + list(it.get("launch_args") or []),
-                                 close_fds=True)
-            except Exception as e:  # noqa: BLE001
-                print("拉起新版本失败：%s" % e, flush=True)
-            break
-    return 0
 
 
 def main(argv=None) -> int:
@@ -184,6 +231,15 @@ def main(argv=None) -> int:
         res = upd.apply_pending(data)
         if res.get("applied"):
             print("已应用待更新：%s" % res.get("version"), flush=True)
+        if res.get("error"):
+            print("应用待更新失败：%s" % res.get("error"), flush=True)
+        # 走到这里说明**新版本已经跑起来了** —— 这时才敢删 .bak 备份与暂存目录。
+        # 备份要留到这一刻：万一新版启动就崩，.bak 还在，人工改名即可回滚。
+        if upd.is_frozen():
+            freed = upd.post_boot_maintenance(
+                data, install_dir=os.path.dirname(os.path.abspath(sys.executable)))
+            if freed:
+                print("已清理更新残留：%s" % "、".join(freed), flush=True)
     except Exception as e:  # noqa: BLE001
         print("应用待更新失败：%s" % e, flush=True)
 

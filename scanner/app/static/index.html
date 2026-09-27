@@ -1925,11 +1925,29 @@ async function loadSettings(){
       $('#updActions').hidden = false;
       const st = await apijson('/api/update/progress').catch(() => null);
       if (st) syncUpdateActions(st);
+      reportLastBoot();        // 上次「安装并重启」有没有失败过
     } else {
       $('#updActions').hidden = true;
     }
     if (SETTINGS.auto_check_update) checkUpdate(false);
   } catch (e) { /* 设置读不到不影响扫描 */ }
+}
+
+// 上一次「更新并重启」如果崩在引导阶段，当时的界面是看不到的（服务已经退了）。
+// 引导程序把它记在 update_boot.json 里，这里读一次并显示 —— 读到即清。
+async function reportLastBoot(){
+  try {
+    const r = await apijson('/api/update/last-boot');
+    if (!r || !r.failure) return;
+    const f = r.failure;
+    const box = $('#setUpdBox');
+    if (!box) return;
+    box.hidden = false;
+    box.className = 'upd';
+    box.innerHTML = `<b>上次更新没有装成功</b>（想装 ${esc(f.version || '?')}，退出码 ${esc(String(f.exitCode))}）
+      <br>${esc(f.error || '未知原因')}
+      <br><span class="hint">详细过程在数据目录的 update.log。可以重新点「安装并重启」再试一次。</span>`;
+  } catch (e) { /* 读不到就算了，不影响使用 */ }
 }
 
 // 三种结局都要说清楚：有新版本 / 已是最新 / 查不到（内网很常见）。
@@ -2000,7 +2018,9 @@ $('#setAutoUpd').onchange = async e => {
 function syncUpdateActions(st){
   st = st || {};
   const dl = $('#btnDlUpd'), inst = $('#btnInstall'), prog = $('#updProg');
-  const ver = st.version ? (' v' + st.version) : '';
+  // st.version 来自 GitHub 的 tag，**自带 v 前缀**（"v1.4.2"）。原来直接拼 ' v' + st.version，
+  // 界面上就成了「安装并重启 vv1.4.2」。这里统一剥掉前导 v 再拼。
+  const ver = st.version ? (' v' + String(st.version).replace(/^v/i, '')) : '';
   if (st.running){
     dl.hidden = true; inst.hidden = true;
     prog.textContent = '下载中…' + (st.total ? (' ' + Math.round(st.progress / st.total * 100) + '%') : '');
@@ -2056,16 +2076,56 @@ async function installUpdate(){
   try {
     const r = await postj('/api/update/install', {});
     if (r.restarting){
-      toast('正在重启并安装新版本…');
+      toast('已开始安装，正在等待新版本启动…');
       stopPoll();
-      setTimeout(() => location.reload(), 4000);   // 等服务重新起来
+      // 等版本号真的变了，而不是盲等固定秒数。**不 await**：这一等最长 90 秒，
+      // 卡在这里会让下面那段 catch 平白多一个「请求失败」的出错机会 —— 而它其实
+      // 已经不需要再管这个按钮了（成功就刷新页面，失败由 waitForRestart 自己
+      // 把按钮恢复可点）。
+      waitForRestart(r.from, r.to);
       return;
     }
-    if (!r.ok){ toast('安装失败：' + (r.error || '')); inst.disabled = false; }
+    if (!r.ok){
+      // 起不来时服务端会把原因带回来（引导程序没报到）—— 别只说「失败了」
+      toast('安装失败：' + (r.error || ''));
+      inst.disabled = false;
+    }
   } catch (e){
     toast('安装请求失败：' + e.message);
     inst.disabled = false;
   }
+}
+
+// 「更新并重启」之后耐心等新版本自己起来，再刷新页面。
+// 老实现是 setTimeout(reload, 4000) 盲等 —— 窗口没起来的话，4 秒后刷出来的
+// 还是老页面，用户看到的就是「点了没反应、版本号也没变」。这里改成轮询 /api/health：
+//   · 版本号变了         → 成功，刷新
+//   · 版本号还是旧的但能连上 → 说明服务重启过但没换成新版，提示检查 update.log
+//   · 一直连不上          → 说明服务压根没起来，提示手动双击启动
+async function waitForRestart(fromVer, toVer){
+  const info = $('#setUpdInfo');
+  const from = fromVer || '', to = toVer || '';
+  for (let i = 0; i < 60; i++){                 // 最多 ~90 秒
+    await new Promise(r => setTimeout(r, 1500));
+    let h = null;
+    try {
+      const resp = await fetch('/api/health', {cache: 'no-store'});
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      h = await resp.json();
+    } catch (e){ continue; }                    // 还没起来，继续等
+    const v = 'v' + (h.version || '');
+    if (to && v === to){ location.reload(); return; }
+    if (from && v === from && i >= 3){
+      // 服务活了但还是旧版本：不是「没反应」，是没换成功
+      if (info) info.textContent = `服务已重启，但版本仍是 ${v}（未换成 ${to}）—— 请查看数据目录里的 update.log`;
+      toast('更新没有生效，版本仍是 ' + v + '，详见 update.log');
+      $('#btnInstall').disabled = false;
+      return;
+    }
+    if (i >= 6 && info) info.textContent = '正在等待新版本启动…（已等 ' + ((i + 1) * 1.5 | 0) + ' 秒）';
+  }
+  toast('新版本启动超时，请手动双击程序图标启动');
+  $('#btnInstall').disabled = false;
 }
 
 $('#btnDlUpd').onclick = downloadUpdate;
